@@ -9,6 +9,9 @@ lerna-debug.log*
 
 node_modules
 dist
+backend/dist-lambda
+backend/cdk.out
+scratch/
 dist-ssr
 *.local
 .env

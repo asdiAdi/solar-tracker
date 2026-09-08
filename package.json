@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy:backend": "npm --prefix backend run deploy",
+    "deploy:backend:prod": "npm --prefix backend run deploy",
+    "backend:synth": "npm --prefix backend run synth"
   },
   "dependencies": {
     "react": "^19.2.8",
@@ -24,5 +27,8 @@
     "typescript": "~6.0.2",
     "vite": "^8.2.2",
     "vite-plugin-pwa": "^1.3.0"
-  }
+  },
+  "description": "Simple PWA Solar Tracking app to track and estimate expenses.",
+  "main": "index.js",
+  "keywords": []
 }

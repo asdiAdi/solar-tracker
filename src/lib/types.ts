@@ -2,10 +2,10 @@
  * Shared Solar Tracker schema.
  * Your future AWS API Gateway should return this shape so the frontend just works.
  *
- * GET {API_BASE_URL}/live                        -> SolarReading (live kW now)
- * GET {API_BASE_URL}/day?date=YYYY-MM-DD         -> SolarReading (that day totals)
- * GET {API_BASE_URL}/month?month=YYYY-MM         -> SolarReading (billing month totals)
- * GET {API_BASE_URL}/year?year=YYYY              -> SolarReading (billing year totals)
+ * GET {API_BASE_URL}/live                        -> SolarData (live kW now)
+ * GET {API_BASE_URL}/day?date=YYYY-MM-DD         -> SolarData (that day totals)
+ * GET {API_BASE_URL}/month?month=YYYY-MM         -> SolarData (billing month totals)
+ * GET {API_BASE_URL}/year?year=YYYY              -> SolarData (billing year totals)
  */
 export interface LiveValues {
   solar_kw: number       // generated right now
@@ -27,9 +27,8 @@ export interface CostTotals {
   saved_php: number // vs buying everything from grid
 }
 
-export interface SolarReading {
+export interface SolarData {
   timestamp: string
-  label: string
   live: LiveValues
   energy: EnergyTotals
   cost: CostTotals

@@ -1,5 +1,5 @@
 import { CONFIG } from '../config'
-import type { SolarReading } from './types'
+import type { SolarData } from './types'
 
 async function fetchJson<T>(url: string): Promise<T> {
   const r = await fetch(url)
@@ -8,7 +8,7 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 /** Deterministic pseudo-variation so past dates show different placeholder numbers. */
-function vary(base: SolarReading, seedStr: string): SolarReading {
+function vary(base: SolarData, seedStr: string): SolarData {
   let h = 0
   for (let i = 0; i < seedStr.length; i++) h = (h * 31 + seedStr.charCodeAt(i)) >>> 0
   const f = 0.7 + ((h % 60) / 100) // 0.70 - 1.29
@@ -32,10 +32,10 @@ function vary(base: SolarReading, seedStr: string): SolarReading {
 }
 const round1 = (n: number) => Math.round(n * 10) / 10
 
-export async function getReading(
+export async function getSolarData(
   kind: 'live' | 'day' | 'month' | 'year',
   dateKey?: string,
-): Promise<SolarReading> {
+): Promise<SolarData> {
   const base = CONFIG.API_BASE_URL.replace(/\/$/, '')
   const q =
     kind === 'day' && dateKey ? `?date=${dateKey}` :
@@ -46,7 +46,7 @@ export async function getReading(
   let lastErr: unknown
   for (const u of candidates) {
     try {
-      const data = await fetchJson<SolarReading>(u.split('?')[0])
+      const data = await fetchJson<SolarData>(u.split('?')[0])
       if (dateKey && kind !== 'live') return vary(data, dateKey)
       return data
     } catch (e) {

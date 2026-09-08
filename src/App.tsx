@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { CONFIG } from './config'
-import { getReading } from './lib/api'
+import { getSolarData } from './lib/api'
 import { currentMonthISO, currentYear, todayISO } from './lib/date'
-import type { Period, SolarReading } from './lib/types'
+import type { Period, SolarData } from './lib/types'
 import ThemeSwitcher, { getInitialTheme } from './components/ThemeSwitcher'
 import PeriodTabs from './components/PeriodTabs'
 import DateSelector from './components/DateSelector'
@@ -20,8 +20,8 @@ export default function App() {
   const [day, setDay] = useState(isoDay())
   const [month, setMonth] = useState(isoMonth())
   const [year, setYear] = useState(isoYear())
-  const [data, setData] = useState<Record<Period, SolarReading | null>>({ day: null, month: null, year: null })
-  const [live, setLive] = useState<SolarReading | null>(null)
+  const [data, setData] = useState<Record<Period, SolarData | null>>({ day: null, month: null, year: null })
+  const [live, setLive] = useState<SolarData | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -33,15 +33,15 @@ export default function App() {
   useEffect(() => {
     let alive = true
     setError(null)
-    getReading('live').then((r) => alive && setLive(r)).catch(() => { })
-    getReading(period, dateKey).then((r) => alive && setData((d) => ({ ...d, [period]: r }))).catch((e) => alive && setError(String(e)))
+    getSolarData('live').then((r) => alive && setLive(r)).catch(() => { })
+    getSolarData(period, dateKey).then((r) => alive && setData((d) => ({ ...d, [period]: r }))).catch((e) => alive && setError(String(e)))
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period, day, month, year])
 
   useEffect(() => {
-    getReading('month', month).then((r) => setData((d) => (d.month ? d : { ...d, month: r }))).catch(() => { })
-    getReading('day', day).then((r) => setData((d) => (d.day ? d : { ...d, day: r }))).catch(() => { })
+    getSolarData('month', month).then((r) => setData((d) => (d.month ? d : { ...d, month: r }))).catch(() => { })
+    getSolarData('day', day).then((r) => setData((d) => (d.day ? d : { ...d, day: r }))).catch(() => { })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
