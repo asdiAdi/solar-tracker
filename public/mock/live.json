@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-09-08T12:00:00+08:00",
+  "live": {
+    "solar_kw": 3.1,
+    "home_kw": 2.8,
+    "grid_kw": 0.6,
+    "battery_kw": 0.9,
+    "battery_soc_pct": 68
+  },
+  "energy": {
+    "generated_kwh": 22.5,
+    "consumed_kwh": 15.1,
+    "grid_import_kwh": 3.2,
+    "grid_export_kwh": 10.6
+  },
+  "cost": {
+    "grid_import_php": 38.4,
+    "saved_php": 143.0
+  }
+}
