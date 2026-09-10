@@ -13,6 +13,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
+    // saved data
     const cacheTable = new dynamodb.Table(this, 'SolarTrackerCache', {
       tableName: 'SolarTrackerCache',
       partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
@@ -21,10 +22,11 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
+    // work
     const fn = new lambda.Function(this, 'SolarDataFn', {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset('dist-lambda'), // built locally via `npm run bundle` (no Docker)
+      code: lambda.Code.fromAsset('dist-lambda'),
       memorySize: 256,
       timeout: cdk.Duration.seconds(20),
       logRetention: logs.RetentionDays.ONE_WEEK,
@@ -38,6 +40,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
     });
     cacheTable.grantReadWriteData(fn);
 
+    // access
     const api = new apigw.RestApi(this, 'SolarTrackerApi', {
       restApiName: 'solar-tracker-backend',
       defaultCorsPreflightOptions: { allowOrigins: apigw.Cors.ALL_ORIGINS, allowMethods: ['GET'] },
@@ -52,10 +55,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       api.root.addResource(p).addMethod('GET', new apigw.LambdaIntegration(fn), { apiKeyRequired: true });
     }
 
-    // Background poller: keeps shared DynamoDB cache warm so users rarely
-    // wait on Solarman and bursts don't spike the Solarman rate limit.
-    // Every 5 min: force-refresh `live`, ensure today/this-month/this-year
-    // (history helpers only fetch when their TTL is stale).
+    // keeps data ready
     const warmRule = new events.Rule(this, 'SolarWarmRule', {
       description: 'Pre-warm SolarTracker DynamoDB cache',
       schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
