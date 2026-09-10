@@ -1,5 +1,5 @@
 import type { EnergyTotals } from "../lib/types";
-import { kwhParts } from "../lib/format";
+import { isNA, kwhParts } from "../lib/format";
 
 export default function TotalsCards({
   energy,
@@ -12,7 +12,7 @@ export default function TotalsCards({
     { t: "Generated", v: energy.generated_kwh, tone: "var(--good)" },
     { t: "Consumed", v: energy.consumed_kwh, tone: "var(--accent)" },
     { t: "Imported", v: energy.grid_import_kwh, tone: "var(--warn)" },
-    { t: "Bypassed", v: energy.grid_export_kwh, tone: "var(--bad)" },
+    { t: "Bypassed", v: energy.bypass_kwh, tone: "var(--bad)" },
   ];
   return (
     <section aria-label={`${label} energy totals`} className="card p-5">
@@ -20,6 +20,7 @@ export default function TotalsCards({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {items.map((i) => {
           const p = kwhParts(i.v);
+          const missing = isNA(i.v);
           return (
             <div
               key={i.t}
@@ -27,9 +28,9 @@ export default function TotalsCards({
               style={{ background: "var(--chip)" }}
             >
               <div className="text-sm font-semibold muted">{i.t}</div>
-              <div className="med-number mt-1" style={{ color: i.tone }}>
+              <div className="med-number mt-1" style={{ color: missing ? "var(--bad)" : i.tone }}>
                 {p.value}
-                <span className="unit">{p.unit}</span>
+                {p.unit && <span className="unit">{p.unit}</span>}
               </div>
             </div>
           );

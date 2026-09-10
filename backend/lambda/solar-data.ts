@@ -9,7 +9,28 @@ const RATE = Number(process.env.GRID_PHP_PER_KWH ?? "12");
 const TZ = "Asia/Manila";
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
-let liveCache: { at: number; body: any } | null = null;
+const LIVE_TTL_MS = 5 * 60_000;
+const HIST_TTL_MS = 30 * 60_000;
+
+const cache = new Map<string, { at: number; value: any }>();
+
+export function clearSolarCache() {
+  cache.clear();
+}
+
+function cacheGet(key: string, ttlMs: number): any | undefined {
+  const e = cache.get(key);
+  if (!e) return undefined;
+  if (Date.now() - e.at >= ttlMs) {
+    cache.delete(key);
+    return undefined;
+  }
+  return e.value;
+}
+
+function cacheSet(key: string, value: any) {
+  cache.set(key, { at: Date.now(), value });
+}
 
 async function sm(path: string, body: any) {
   const res = await fetch(`${BASE}${path}`, {
@@ -37,6 +58,7 @@ const num = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
+
 function kv(dataList: any[] = []) {
   const m: Record<string, string> = {};
   for (const d of dataList) if (d?.key) m[d.key] = d.value;
@@ -45,24 +67,12 @@ function kv(dataList: any[] = []) {
 
 export function mapLive(body: any) {
   const m = kv(body?.dataList);
-  const solar_kw = r1(
-    (num(m.DP1) + num(m.DP2) + num(m.DP3) + num(m.DP4)) / 1000,
-  );
-
-  // E_Puse_t1: total consumption power
-  // C_P_L1: Load Power L1
-  const home_kw = r1(num(m.E_Puse_t1 ?? m.C_P_L1) / 1000);
-
-  // T_A_P_O_G: Total Active Power of the Grid
-  // UAP1: L1 Utility Active Power
-  const grid_kw = r1(num(m.T_A_P_O_G ?? m.UAP1) / 1000);
-
-  // B_P1: battery power
-  const battery_kw = r1(-num(m.B_P1) / 1000); // device + = discharging; contract + = charging
-
-  // B_left_cap1: SoC
+  const solar_w = Math.round(num(m.DP1) + num(m.DP2) + num(m.DP3) + num(m.DP4));
+  const home_w = Math.round(num(m.E_Puse_t1 ?? m.C_P_L1));
+  const grid_w = Math.round(num(m.T_A_P_O_G ?? m.UAP1));
+  const battery_w = Math.round(-num(m.B_P1));
   const battery_soc_pct = Math.round(num(m.B_left_cap1));
-  return { solar_kw, home_kw, grid_kw, battery_kw, battery_soc_pct };
+  return { solar_w, home_w, grid_w, battery_w, battery_soc_pct };
 }
 
 export function sumHistorical(lists: any[][]) {
@@ -85,10 +95,10 @@ export function sumHistorical(lists: any[][]) {
     consumed_kwh: r1(t.consumed_kwh),
     grid_import_kwh: r1(t.grid_import_kwh),
     grid_export_kwh: r1(t.grid_export_kwh),
+    bypass_kwh: 0,
   };
 }
 
-// --- Manila span helpers (offset-aware) ---
 function manilaParts(d: Date) {
   const f = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
@@ -99,10 +109,12 @@ function manilaParts(d: Date) {
   const [y, m, dd] = f.format(d).split("-").map(Number);
   return { y, m, d: dd };
 }
+
 function manilaToday(offsetDays = 0) {
   const p = manilaParts(new Date(Date.now() + offsetDays * 864e5));
   return p;
 }
+
 const pad = (n: number) => String(n).padStart(2, "0");
 
 async function histChunk(
@@ -135,8 +147,13 @@ async function energyFor(
     const [y, m, d] = base.split("-").map(Number);
     const dt = new Date(Date.UTC(y, m - 1, d + offset));
     const iso = `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+    const key = `day:${iso}`;
+    const hit = cacheGet(key, HIST_TTL_MS);
+    if (hit) return hit;
     const lists = await histChunk(sn, 2, iso, iso);
-    return { energy: sumHistorical(lists), ts: `${iso}T00:00:00+08:00` };
+    const out = { energy: sumHistorical(lists), ts: `${iso}T00:00:00+08:00` };
+    cacheSet(key, out);
+    return out;
   }
   if (kind === "month") {
     const base = month ?? `${manilaToday().y}-${pad(manilaToday().m)}`;
@@ -145,19 +162,32 @@ async function energyFor(
     y = Math.floor(tot / 12);
     m = (tot % 12) + 1;
     const mm = `${y}-${pad(m)}`;
+    const key = `month:${mm}`;
+    const hit = cacheGet(key, HIST_TTL_MS);
+    if (hit) return hit;
     const lists = await histChunk(sn, 3, mm, mm);
-    // timeType=3 same-month returns daily rows; sum all
-    return { energy: sumHistorical(lists), ts: `${mm}-01T00:00:00+08:00` };
+    const out = { energy: sumHistorical(lists), ts: `${mm}-01T00:00:00+08:00` };
+    cacheSet(key, out);
+    return out;
   }
   const baseY = Number(year ?? manilaToday().y) + offset;
+  const key = `year:${baseY}`;
+  const hit = cacheGet(key, HIST_TTL_MS);
+  if (hit) return hit;
   const lists = await histChunk(sn, 4, String(baseY), String(baseY));
-  return { energy: sumHistorical(lists), ts: `${baseY}-01-01T00:00:00+08:00` };
+  const out = {
+    energy: sumHistorical(lists),
+    ts: `${baseY}-01-01T00:00:00+08:00`,
+  };
+  cacheSet(key, out);
+  return out;
 }
 
 async function getLive() {
-  if (liveCache && Date.now() - liveCache.at < 60_000) return liveCache.body;
+  const hit = cacheGet("live", LIVE_TTL_MS);
+  if (hit) return hit;
   const body = await sm("/device/v1.0/currentData", { deviceSn: DEVICE_SN() });
-  liveCache = { at: Date.now(), body };
+  cacheSet("live", body);
   return body;
 }
 
@@ -176,32 +206,24 @@ export const handler = async (
     const path = (ev.path ?? "").replace(/\/$/, "").split("/").pop();
     const q = ev.queryStringParameters ?? {};
     const offset = Number(q.offset ?? "0") || 0;
-    const liveBody = await getLive();
-    const live = mapLive(liveBody);
-    let energy, timestamp: string;
     if (path === "live") {
-      // energy = today-so-far totals from currentData daily keys as fallback-safe snapshot
-      const m = kv(liveBody?.dataList);
-      energy = {
-        generated_kwh: r1(num(m.Etdy_ge1)),
-        consumed_kwh: r1(num(m.Etdy_use1)),
-        grid_import_kwh: r1(num(m.Etdy_pu1)),
-        grid_export_kwh: r1(num(m.t_gc_tdy1)),
-      };
+      const liveBody = await getLive();
+      const live = mapLive(liveBody);
       const t = manilaToday();
-      timestamp = `${t.y}-${pad(t.m)}-${pad(t.d)}T00:00:00+08:00`;
-    } else if (path === "day" || path === "month" || path === "year") {
+      const timestamp = `${t.y}-${pad(t.m)}-${pad(t.d)}T00:00:00+08:00`;
+      return json(200, { timestamp, live });
+    }
+    if (path === "day" || path === "month" || path === "year") {
       const r = await energyFor(path, q.date, q.month, q.year, offset);
-      energy = r.energy;
-      timestamp = r.ts;
-    } else return json(404, { error: "unknown route" });
-    const cost = {
-      grid_import_php: Math.round(energy.grid_import_kwh * RATE),
-      saved_php: Math.round(
-        Math.max(0, energy.generated_kwh - energy.grid_export_kwh) * RATE * 0.9,
-      ),
-    };
-    return json(200, { timestamp, live, energy, cost });
+      const energy = r.energy;
+      const consumed_php = Math.round(energy.consumed_kwh * RATE);
+      const bypass_php = Math.round(energy.bypass_kwh * RATE);
+      const solar_php = Math.round(energy.generated_kwh * RATE);
+      const net_php = consumed_php + bypass_php - solar_php;
+      const cost = { consumed_php, bypass_php, solar_php, net_php };
+      return json(200, { timestamp: r.ts, energy, cost });
+    }
+    return json(404, { error: "unknown route" });
   } catch (e: any) {
     return json(e?.status ?? 500, { error: e?.message ?? "internal" });
   }

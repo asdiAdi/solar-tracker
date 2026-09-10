@@ -9,34 +9,56 @@ interface OpenMeteoDaily {
 export interface MonthForecast {
   forecastKwh: number
   monthEndKwh: number
-  monthEndGridPhp: number
+  monthEndNetPhp: number
   avgSunHours: number
   usedFallback: boolean
 }
 
-/**
- * Estimate month-end using Open-Meteo radiation/sunshine + today's yield.
- * Formula: ratio = today_kwh / max(today_radiation, 0.5)
- * forecast = sum(remaining_days_radiation * ratio), capped by SYSTEM_KWP * sun_hours.
- */
+const FORECAST_TTL_MS = 30 * 60_000;
+let forecastCache: { at: number; key: string; promise: Promise<MonthForecast> } | null = null;
+
+function forecastKey(
+  soFarSolarKwh: number,
+  todaySolarKwh: number,
+  soFarNetPhp: number,
+  todayConsumedKwh: number,
+): string {
+  const day = new Date().toISOString().slice(0, 10);
+  return `${day}|${soFarSolarKwh}|${todaySolarKwh}|${soFarNetPhp}|${todayConsumedKwh}`;
+}
+
 export async function fetchMonthForecast(
-  soFarKwh: number,
-  todayKwh: number,
-  soFarGridPhp: number,
-  todayGridKwh: number,
+  soFarSolarKwh: number,
+  todaySolarKwh: number,
+  soFarNetPhp: number,
+  todayConsumedKwh: number,
+): Promise<MonthForecast> {
+  const key = forecastKey(soFarSolarKwh, todaySolarKwh, soFarNetPhp, todayConsumedKwh);
+  if (forecastCache && forecastCache.key === key && Date.now() - forecastCache.at < FORECAST_TTL_MS) {
+    return forecastCache.promise;
+  }
+  const promise = fetchMonthForecastInner(soFarSolarKwh, todaySolarKwh, soFarNetPhp, todayConsumedKwh);
+  forecastCache = { at: Date.now(), key, promise };
+  return promise;
+}
+
+async function fetchMonthForecastInner(
+  soFarSolarKwh: number,
+  todaySolarKwh: number,
+  soFarNetPhp: number,
+  todayConsumedKwh: number,
 ): Promise<MonthForecast> {
   const fallback = () => {
-    // No network: assume rest of month = today daily average prorated
     const now = new Date()
     const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
     const elapsed = Math.max(1, now.getDate())
-    const dailyAvg = soFarKwh / elapsed
+    const dailyAvg = soFarSolarKwh / elapsed
     const remaining = dim - elapsed
     const forecastKwh = dailyAvg * remaining
     return {
       forecastKwh,
-      monthEndKwh: soFarKwh + forecastKwh,
-      monthEndGridPhp: soFarGridPhp + (todayGridKwh / Math.max(1, elapsed)) * remaining * 0 + (todayGridKwh * remaining) / 1,
+      monthEndKwh: soFarSolarKwh + forecastKwh,
+      monthEndNetPhp: soFarNetPhp + (todayConsumedKwh * remaining) / 1,
       avgSunHours: 5,
       usedFallback: true,
     } as MonthForecast
@@ -53,11 +75,10 @@ export async function fetchMonthForecast(
     if (!daily?.time?.length) throw new Error('empty')
 
     const todayStr = new Date().toISOString().slice(0, 10)
-    // Find today index (Manila date may differ by a day; use closest)
     let todayIdx = daily.time.findIndex((t) => t === todayStr)
-    if (todayIdx < 0) todayIdx = 2 // past_days=2 => index 2 is today approx
+    if (todayIdx < 0) todayIdx = 2
     const todayRad = daily.shortwave_radiation_sum?.[todayIdx] ?? 15
-    const ratio = todayKwh / Math.max(0.5, todayRad)
+    const ratio = todaySolarKwh / Math.max(0.5, todayRad)
 
     let forecastKwh = 0
     let sunSec = 0
@@ -65,30 +86,26 @@ export async function fetchMonthForecast(
     for (let i = todayIdx + 1; i < daily.time.length; i++) {
       const rad = daily.shortwave_radiation_sum?.[i] ?? 15
       const sun = daily.sunshine_duration?.[i] ?? 18000
-      // cap by inverter: max kWh/day ~= SYSTEM_KWP * sun_hours * 0.8 perf ratio
       const sunH = sun / 3600
       const cap = CONFIG.SYSTEM_KWP * sunH * 0.8
       forecastKwh += Math.min(rad * ratio, cap)
       sunSec += sun
       count++
     }
-    // Only keep remaining days of this calendar month (max)
     const now = new Date()
     const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
     const remaining = Math.max(0, dim - now.getDate())
     if (count > remaining && remaining > 0) forecastKwh = (forecastKwh / count) * remaining
 
     const avgSunHours = count ? sunSec / count / 3600 : 5
-    // Grid forecast: assume daily grid avg continues
     const elapsed = Math.max(1, now.getDate())
-    const dailyGridAvg = soFarGridPhp / elapsed / CONFIG.GRID_PHP_PER_KWH // kwh
-    const forecastGridKwh = dailyGridAvg * remaining
-    const monthEndGridPhp = soFarGridPhp + forecastGridKwh * CONFIG.GRID_PHP_PER_KWH
+    const dailyNetAvg = soFarNetPhp / elapsed
+    const monthEndNetPhp = soFarNetPhp + dailyNetAvg * remaining
 
     return {
       forecastKwh,
-      monthEndKwh: soFarKwh + forecastKwh,
-      monthEndGridPhp,
+      monthEndKwh: soFarSolarKwh + forecastKwh,
+      monthEndNetPhp,
       avgSunHours,
       usedFallback: false,
     }

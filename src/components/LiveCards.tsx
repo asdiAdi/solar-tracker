@@ -1,12 +1,13 @@
 import type { LiveValues } from "../lib/types";
-import { kwParts } from "../lib/format";
+import { isNA, kwParts } from "../lib/format";
 
 function Power({ v, tone }: { v: number; tone?: string }) {
   const p = kwParts(v);
+  const missing = isNA(v);
   return (
-    <span className="big-number" style={tone ? { color: tone } : undefined}>
+    <span className="big-number" style={{ color: missing ? "var(--bad)" : tone }}>
       {p.value}
-      <span className="unit">{p.unit}</span>
+      {p.unit && <span className="unit">{p.unit}</span>}
     </span>
   );
 }
@@ -33,8 +34,10 @@ function EqualCard({
 }
 
 export default function LiveCards({ live }: { live: LiveValues }) {
-  const charging = live.battery_kw >= 0;
-  const pct = Math.max(0, Math.min(100, live.battery_soc_pct));
+  const socMissing = isNA(live.battery_soc_pct);
+  const battMissing = isNA(live.battery_w);
+  const charging = (live.battery_w ?? 0) >= 0;
+  const pct = socMissing ? 0 : Math.max(0, Math.min(100, live.battery_soc_pct));
 
   return (
     <section aria-label="Right now" className="flex flex-col gap-4">
@@ -45,19 +48,19 @@ export default function LiveCards({ live }: { live: LiveValues }) {
             className="text-xs font-bold px-2.5 py-1 rounded-full"
             style={{
               background: "var(--chip)",
-              color: charging ? "var(--good)" : "var(--warn)",
+              color: socMissing ? "var(--bad)" : charging ? "var(--good)" : "var(--warn)",
             }}
           >
-            {charging ? "● Charging" : "● Discharging"}
+            {socMissing ? "● N/A" : charging ? "● Charging" : "● Discharging"}
           </div>
         </div>
         <div className="flex items-baseline gap-2 mt-2">
-          <span className="big-number">
-            {pct}
-            <span className="unit">%</span>
+          <span className="big-number" style={socMissing ? { color: "var(--bad)" } : undefined}>
+            {socMissing ? "N/A" : pct}
+            {!socMissing && <span className="unit">%</span>}
           </span>
-          <span className="text-sm muted font-medium">
-            {Math.abs(live.battery_kw).toFixed(2)} kW {charging ? "in" : "out"}
+          <span className="text-sm muted font-medium" style={battMissing ? { color: "var(--bad)" } : undefined}>
+            {battMissing ? "N/A" : `${Math.abs(Math.round(live.battery_w))} W ${charging ? "in" : "out"}`}
           </span>
         </div>
         <div
@@ -71,7 +74,7 @@ export default function LiveCards({ live }: { live: LiveValues }) {
         >
           <div
             className="h-full rounded-full transition-all"
-            style={{ width: `${pct}%`, background: "var(--good)" }}
+            style={{ width: `${pct}%`, background: socMissing ? "var(--bad)" : "var(--good)" }}
           />
         </div>
       </div>
@@ -79,26 +82,26 @@ export default function LiveCards({ live }: { live: LiveValues }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <EqualCard
           title="Solar"
-          value={live.solar_kw}
+          value={live.solar_w}
           caption="generating"
           tone="var(--good)"
         />
         <EqualCard
           title="Home"
-          value={live.home_kw}
+          value={live.home_w}
           caption="consuming"
           tone="var(--accent)"
         />
         <EqualCard
           title="Grid"
-          value={Math.abs(live.grid_kw)}
+          value={isNA(live.grid_w) ? live.grid_w : Math.abs(live.grid_w)}
           caption={"importing"}
           status={"importing"}
           tone={"var(--warn)"}
         />
         <EqualCard
           title="Bypass"
-          value={Math.abs(live.grid_kw)}
+          value={0}
           caption={"bypassing"}
           tone={"var(--bad)"}
         />

@@ -1,15 +1,14 @@
-/**
- * Solar Tracker central config.
- */
-const envLat = Number(import.meta.env.VITE_LAT)
-const envLon = Number(import.meta.env.VITE_LON)
-const envTz = import.meta.env.VITE_TIMEZONE as string | undefined
+const envLat = Number(import.meta.env.VITE_LAT);
+const envLon = Number(import.meta.env.VITE_LON);
+const envTz = import.meta.env.VITE_TIMEZONE as string;
+const envApiBase = import.meta.env.VITE_API_BASE_URL as string;
+const envApiKey = import.meta.env.VITE_X_API_KEY as string;
 
 export const CONFIG = {
-  APP_NAME: 'Solar Tracker',
-  API_BASE_URL: '/mock',
+  APP_NAME: "Solar Tracker",
+  API_BASE_URL: envApiBase.replace(/\/$/, ""),
+  API_KEY: envApiKey,
 
-  // defaults to manila
   LAT: envLat ?? 14.5995,
   LON: envLon ?? 120.9842,
   TIMEZONE: envTz ?? "Asia/Manila",
@@ -17,16 +16,14 @@ export const CONFIG = {
   SYSTEM_KWP: 6,
 
   BATTERY_AH: 660,
-  BATTERY_VOLTAGE: 12,
+  BATTERY_VOLTAGE: 52,
   get BATTERY_KWH() {
-    return (this.BATTERY_AH * this.BATTERY_VOLTAGE) / 1000
+    return (this.BATTERY_AH * this.BATTERY_VOLTAGE) / 1000;
   },
 
-  // Single flat grid rate
   GRID_PHP_PER_KWH: 12.0,
 
-  // Billing month offset: 0 = 1st-31st, e.g. 15 = 15th-14th
   BILLING_DAY_OFFSET: 0,
-} as const
+} as const;
 
-export type AppConfig = typeof CONFIG
+export type AppConfig = typeof CONFIG;

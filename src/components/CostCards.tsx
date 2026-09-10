@@ -1,5 +1,5 @@
 import { CONFIG } from "../config";
-import { php } from "../lib/format";
+import { isNA, php } from "../lib/format";
 import type { CostTotals, EnergyTotals } from "../lib/types";
 
 export default function CostCards({
@@ -13,10 +13,9 @@ export default function CostCards({
   label: string;
   netLabel: string;
 }) {
-  const net = cost.grid_import_php - cost.saved_php;
   const rate = CONFIG.GRID_PHP_PER_KWH;
-  // self-consumed kWh implied by savings (keeps numbers consistent with Php)
-  const solarKwh = cost.saved_php / rate;
+  const formula = (v: number) => (isNA(v) ? "N/A" : `${v.toFixed(1)} kWh × ₱${rate.toFixed(1)}/kWh`);
+  const solarMissing = isNA(cost.solar_php);
 
   return (
     <section aria-label={`${label} cost breakdown`} className="card p-5 w-full">
@@ -26,42 +25,42 @@ export default function CostCards({
           <div>
             <div className="text-base font-semibold">Hybrid Power Used</div>
             <div className="formula">
-              {energy.grid_import_kwh.toFixed(1)} kWh × ₱{rate.toFixed(1)}/kWh
+              {formula(energy.consumed_kwh)}
             </div>
           </div>
           <div
             className="text-xl font-bold"
-            style={{ fontVariantNumeric: "tabular-nums" }}
+            style={{ fontVariantNumeric: "tabular-nums", color: isNA(cost.consumed_php) ? "var(--bad)" : undefined }}
           >
-            {php(cost.grid_import_php)}
+            {php(cost.consumed_php)}
           </div>
         </div>
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
             <div className="text-base font-semibold">Bypassed Power Used</div>
             <div className="formula">
-              {solarKwh.toFixed(1)} kWh × ₱{rate.toFixed(1)}/kWh
+              {formula(energy.bypass_kwh)}
             </div>
           </div>
           <div
             className="text-xl font-bold"
-            style={{ fontVariantNumeric: "tabular-nums" }}
+            style={{ fontVariantNumeric: "tabular-nums", color: isNA(cost.bypass_php) ? "var(--bad)" : undefined }}
           >
-            {php(cost.grid_import_php)}
+            {php(cost.bypass_php)}
           </div>
         </div>
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
             <div className="text-base font-semibold">Solar Power Savings</div>
             <div className="formula">
-              {solarKwh.toFixed(1)} kWh × ₱{rate.toFixed(1)}/kWh
+              {formula(energy.generated_kwh)}
             </div>
           </div>
           <div
             className="text-xl font-bold"
-            style={{ color: "var(--good)", fontVariantNumeric: "tabular-nums" }}
+            style={{ color: solarMissing ? "var(--bad)" : "var(--good)", fontVariantNumeric: "tabular-nums" }}
           >
-            −{php(cost.saved_php)}
+            {solarMissing ? php(cost.solar_php) : `−${php(cost.solar_php).replace(/^−/, "")}`}
           </div>
         </div>
         <div
@@ -72,9 +71,9 @@ export default function CostCards({
             <div className="text-lg font-bold">{netLabel}</div>
             <div
               className="text-3xl font-extrabold"
-              style={{ fontVariantNumeric: "tabular-nums" }}
+              style={{ fontVariantNumeric: "tabular-nums", color: isNA(cost.net_php) ? "var(--bad)" : undefined }}
             >
-              {php(net)}
+              {php(cost.net_php)}
             </div>
           </div>
         </div>

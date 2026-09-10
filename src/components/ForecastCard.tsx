@@ -1,25 +1,30 @@
 import { useEffect, useState } from "react";
 import { CONFIG } from "../config";
 import { fetchMonthForecast, type MonthForecast } from "../lib/forecast";
-import { php } from "../lib/format";
-import { kwhParts } from "../lib/format";
+import { isNA, kwhParts, php, sunH } from "../lib/format";
 
 export default function ForecastCard({
-  monthKwh,
-  monthGridPhp,
-  todayKwh,
-  todayGridKwh,
+  monthSolarKwh,
+  monthNetPhp,
+  todaySolarKwh,
+  todayConsumedKwh,
 }: {
-  monthKwh: number;
-  monthGridPhp: number;
-  todayKwh: number;
-  todayGridKwh: number;
+  monthSolarKwh: number;
+  monthNetPhp: number;
+  todaySolarKwh: number;
+  todayConsumedKwh: number;
 }) {
   const [fc, setFc] = useState<MonthForecast | null>(null);
+  const missing =
+    isNA(monthSolarKwh) || isNA(monthNetPhp) || isNA(todaySolarKwh) || isNA(todayConsumedKwh);
 
   useEffect(() => {
+    if (missing) {
+      setFc(null);
+      return;
+    }
     let live = true;
-    fetchMonthForecast(monthKwh, todayKwh, monthGridPhp, todayGridKwh).then(
+    fetchMonthForecast(monthSolarKwh, todaySolarKwh, monthNetPhp, todayConsumedKwh).then(
       (f) => {
         if (live) setFc(f);
       },
@@ -27,14 +32,57 @@ export default function ForecastCard({
     return () => {
       live = false;
     };
-  }, [monthKwh, monthGridPhp, todayKwh, todayGridKwh]);
+  }, [monthSolarKwh, monthNetPhp, todaySolarKwh, todayConsumedKwh, missing]);
 
-  if (!fc)
+  if (missing || !fc) {
+    const p = missing || !fc ? { value: "N/A", unit: "" } : kwhParts(fc.monthEndKwh);
+    const bill = missing || !fc ? "N/A" : php(fc.monthEndNetPhp);
+    const sun = missing || !fc ? "N/A" : sunH(fc.avgSunHours);
+    const billMissing = missing || !fc || isNA(fc.monthEndNetPhp);
+    const yieldMissing = missing || !fc || isNA(fc.monthEndKwh);
+    const sunMissing = missing || !fc || isNA(fc.avgSunHours);
     return (
-      <div className="card p-5 text-base font-semibold muted">
-        Loading forecast…
-      </div>
+      <section className="card p-5" aria-label="Month forecast">
+        <div className="eyebrow mb-1">
+          Forecast · End of month{" "}
+          {fc && !missing ? (fc.usedFallback ? "· offline" : "· live weather") : "· N/A"}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+          <div
+            className="rounded-xl p-4 text-center"
+            style={{ background: "var(--chip)" }}
+          >
+            <div className="text-sm font-semibold muted">Projected Yield</div>
+            <div className="med-number mt-1" style={yieldMissing ? { color: "var(--bad)" } : undefined}>
+              {p.value}
+              {p.unit && <span className="unit">{p.unit}</span>}
+            </div>
+          </div>
+          <div
+            className="rounded-xl p-4 text-center"
+            style={{ background: "var(--chip)" }}
+          >
+            <div className="text-sm font-semibold muted">Projected Bill</div>
+            <div className="med-number mt-1" style={billMissing ? { color: "var(--bad)" } : undefined}>{bill}</div>
+          </div>
+          <div
+            className="rounded-xl p-4 text-center"
+            style={{ background: "var(--chip)" }}
+          >
+            <div className="text-sm font-semibold muted">Sun average</div>
+            <div className="med-number mt-1" style={sunMissing ? { color: "var(--bad)" } : undefined}>
+              {sun}
+              {!sunMissing && <span className="unit">h/day</span>}
+            </div>
+          </div>
+        </div>
+        <div className="formula mt-3">
+          Open-Meteo {CONFIG.LAT.toFixed(2)},{CONFIG.LON.toFixed(2)} ·{" "}
+          {CONFIG.SYSTEM_KWP} kW system
+        </div>
+      </section>
     );
+  }
 
   const p = kwhParts(fc.monthEndKwh);
   return (
@@ -49,9 +97,9 @@ export default function ForecastCard({
           style={{ background: "var(--chip)" }}
         >
           <div className="text-sm font-semibold muted">Projected Yield</div>
-          <div className="med-number mt-1">
+          <div className="med-number mt-1" style={isNA(fc.monthEndKwh) ? { color: "var(--bad)" } : undefined}>
             {p.value}
-            <span className="unit">{p.unit}</span>
+            {p.unit && <span className="unit">{p.unit}</span>}
           </div>
         </div>
         <div
@@ -59,16 +107,16 @@ export default function ForecastCard({
           style={{ background: "var(--chip)" }}
         >
           <div className="text-sm font-semibold muted">Projected Bill</div>
-          <div className="med-number mt-1">{php(fc.monthEndGridPhp)}</div>
+          <div className="med-number mt-1" style={isNA(fc.monthEndNetPhp) ? { color: "var(--bad)" } : undefined}>{php(fc.monthEndNetPhp)}</div>
         </div>
         <div
           className="rounded-xl p-4 text-center"
           style={{ background: "var(--chip)" }}
         >
           <div className="text-sm font-semibold muted">Sun average</div>
-          <div className="med-number mt-1">
-            {fc.avgSunHours.toFixed(1)}
-            <span className="unit">h/day</span>
+          <div className="med-number mt-1" style={isNA(fc.avgSunHours) ? { color: "var(--bad)" } : undefined}>
+            {sunH(fc.avgSunHours)}
+            {!isNA(fc.avgSunHours) && <span className="unit">h/day</span>}
           </div>
         </div>
       </div>
