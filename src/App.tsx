@@ -161,6 +161,10 @@ export default function App() {
   const cost = cur?.cost ?? DEFAULT_COST
   const label = period === 'day' ? (day === isoDay() ? 'Today' : day) : period === 'month' ? (month === isoMonth() ? 'This month' : month) : isoYear()
   const netLabel = period === 'day' ? "Today's net" : period === 'month' ? "Month net" : "Year net"
+  // Loading vs error: spinner while first fetch has no data yet; N/A (red) only after fetch failed.
+  const isLiveLoading = live == null
+  const isPeriodLoading = cur == null && !error
+  const isForecastInputsLoading = monthData == null || dayData == null
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
@@ -175,7 +179,7 @@ export default function App() {
           <ThemeSwitcher />
         </header>
 
-        <LiveCards live={liveValues} />
+        <LiveCards live={liveValues} loading={isLiveLoading} />
 
         <div className="flex flex-col gap-2">
           <PeriodTabs period={period} onChange={setPeriod} />
@@ -196,14 +200,15 @@ export default function App() {
 
         {error && <div className="card p-4 text-base font-semibold" role="alert">Cannot load data: {error}</div>}
 
-        <TotalsCards energy={energy} label={label} />
-        <CostCards cost={cost} energy={energy} label={label} netLabel={netLabel} />
+        <TotalsCards energy={energy} label={label} loading={isPeriodLoading} />
+        <CostCards cost={cost} energy={energy} label={label} netLabel={netLabel} loading={isPeriodLoading} />
         {period === 'month' && (
           <ForecastCard
             monthSolarKwh={monthData?.energy.generated_kwh ?? DEFAULT_ENERGY.generated_kwh}
             monthNetPhp={monthData?.cost.net_php ?? DEFAULT_COST.net_php}
             todaySolarKwh={dayData?.energy.generated_kwh ?? DEFAULT_ENERGY.generated_kwh}
             todayConsumedKwh={dayData?.energy.consumed_kwh ?? DEFAULT_ENERGY.consumed_kwh}
+            inputsLoading={isForecastInputsLoading}
           />
         )}
       </div>
