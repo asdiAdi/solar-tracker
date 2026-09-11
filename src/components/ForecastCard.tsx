@@ -23,22 +23,40 @@ function Tiles({
   const sunMissing = isNA(sunHours);
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-      <div className="rounded-xl p-4 text-center" style={{ background: "var(--chip)" }}>
+      <div
+        className="rounded-xl p-4 text-center"
+        style={{ background: "var(--chip)" }}
+      >
         <div className="text-sm font-semibold muted">Projected Yield</div>
-        <div className="med-number mt-1" style={yieldMissing ? { color: "var(--bad)" } : undefined}>
+        <div
+          className="med-number mt-1"
+          style={yieldMissing ? { color: "var(--bad)" } : undefined}
+        >
           {y.value}
           {y.unit && <span className="unit">{y.unit}</span>}
         </div>
       </div>
-      <div className="rounded-xl p-4 text-center" style={{ background: "var(--chip)" }}>
+      <div
+        className="rounded-xl p-4 text-center"
+        style={{ background: "var(--chip)" }}
+      >
         <div className="text-sm font-semibold muted">Projected Bill</div>
-        <div className="med-number mt-1" style={billMissing ? { color: "var(--bad)" } : undefined}>
+        <div
+          className="med-number mt-1"
+          style={billMissing ? { color: "var(--bad)" } : undefined}
+        >
           {php(billPhp)}
         </div>
       </div>
-      <div className="rounded-xl p-4 text-center" style={{ background: "var(--chip)" }}>
+      <div
+        className="rounded-xl p-4 text-center"
+        style={{ background: "var(--chip)" }}
+      >
         <div className="text-sm font-semibold muted">Sun average</div>
-        <div className="med-number mt-1" style={sunMissing ? { color: "var(--bad)" } : undefined}>
+        <div
+          className="med-number mt-1"
+          style={sunMissing ? { color: "var(--bad)" } : undefined}
+        >
           {sunH(sunHours)}
           {!sunMissing && <span className="unit">h/day</span>}
         </div>
@@ -51,7 +69,11 @@ function LoadingTiles() {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
       {["Projected Yield", "Projected Bill", "Sun average"].map((t) => (
-        <div key={t} className="rounded-xl p-4 text-center" style={{ background: "var(--chip)" }}>
+        <div
+          key={t}
+          className="rounded-xl p-4 text-center"
+          style={{ background: "var(--chip)" }}
+        >
           <div className="text-sm font-semibold muted">{t}</div>
           <div className="med-number mt-1" style={{ color: "var(--muted)" }}>
             <LoadingSpinner />
@@ -83,7 +105,11 @@ export default function ForecastCard({
   yearNetPhp?: number;
   inputsLoading?: boolean;
 }) {
-  const [result, setResult] = useState<{ yieldKwh: number; billPhp: number; sunHours: number } | null>(null);
+  const [result, setResult] = useState<{
+    yieldKwh: number;
+    billPhp: number;
+    sunHours: number;
+  } | null>(null);
   const [failed, setFailed] = useState(false);
   const [fetchingMeteo, setFetchingMeteo] = useState(false);
 
@@ -91,7 +117,10 @@ export default function ForecastCard({
     period === "day"
       ? isNA(todaySolarKwh) || isNA(todayConsumedKwh)
       : period === "month"
-        ? isNA(monthSolarKwh) || isNA(monthNetPhp) || isNA(todaySolarKwh) || isNA(todayConsumedKwh)
+        ? isNA(monthSolarKwh) ||
+          isNA(monthNetPhp) ||
+          isNA(todaySolarKwh) ||
+          isNA(todayConsumedKwh)
         : isNA(yearSolarKwh) || isNA(yearNetPhp);
 
   useEffect(() => {
@@ -109,15 +138,39 @@ export default function ForecastCard({
     const run = async () => {
       try {
         if (period === "day") {
-          const f = await fetchDayForecast(todaySolarKwh, todayConsumedKwh, todayNetPhp);
-          if (live) setResult({ yieldKwh: f.yieldKwh, billPhp: f.billPhp, sunHours: f.sunHours });
-        } else if (period === "month") {
-          const f = await fetchMonthForecast(monthSolarKwh, todaySolarKwh, monthNetPhp, todayConsumedKwh, todayNetPhp);
+          const f = await fetchDayForecast(
+            todaySolarKwh,
+            todayConsumedKwh,
+            todayNetPhp,
+          );
           if (live)
-            setResult({ yieldKwh: f.monthEndKwh, billPhp: f.monthEndNetPhp, sunHours: f.avgSunHours });
+            setResult({
+              yieldKwh: f.yieldKwh,
+              billPhp: f.billPhp,
+              sunHours: f.sunHours,
+            });
+        } else if (period === "month") {
+          const f = await fetchMonthForecast(
+            monthSolarKwh,
+            todaySolarKwh,
+            monthNetPhp,
+            todayConsumedKwh,
+            todayNetPhp,
+          );
+          if (live)
+            setResult({
+              yieldKwh: f.monthEndKwh,
+              billPhp: f.monthEndNetPhp,
+              sunHours: f.avgSunHours,
+            });
         } else {
           const f = await fetchYearForecast(yearSolarKwh, yearNetPhp);
-          if (live) setResult({ yieldKwh: f.yearEndKwh, billPhp: f.yearEndNetPhp, sunHours: f.avgSunHours });
+          if (live)
+            setResult({
+              yieldKwh: f.yearEndKwh,
+              billPhp: f.yearEndNetPhp,
+              sunHours: f.avgSunHours,
+            });
         }
       } catch {
         if (live) setFailed(true);
@@ -142,12 +195,16 @@ export default function ForecastCard({
     inputsLoading,
   ]);
 
-  const showLoading = inputsLoading || fetchingMeteo || (!missing && !result && !failed);
+  const showLoading =
+    inputsLoading || fetchingMeteo || (!missing && !result && !failed);
   if (showLoading) {
     return (
       <section className="card p-5" aria-label="Forecast" aria-busy="true">
         <div className="eyebrow mb-1">
-          Forecast · <span className="inline-flex items-center gap-1.5 align-middle"><LoadingSpinner label="Forecast loading" /> Loading</span>
+          Forecast ·{" "}
+          <span className="inline-flex items-center gap-1.5 align-middle">
+            <LoadingSpinner label="Forecast loading" /> Loading
+          </span>
         </div>
         <LoadingTiles />
       </section>
@@ -166,7 +223,11 @@ export default function ForecastCard({
   return (
     <section className="card p-5" aria-label="Forecast">
       <div className="eyebrow mb-1">Forecast</div>
-      <Tiles yieldKwh={result.yieldKwh} billPhp={result.billPhp} sunHours={result.sunHours} />
+      <Tiles
+        yieldKwh={result.yieldKwh}
+        billPhp={result.billPhp}
+        sunHours={result.sunHours}
+      />
     </section>
   );
 }
