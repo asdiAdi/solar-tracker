@@ -110,9 +110,15 @@ export default function ForecastCard({
   const todayConsumedKwh = day?.energy.consumed_kwh ?? NaN;
   const monthSolarKwh = month?.energy.generated_kwh ?? NaN;
   const yearSolarKwh = year?.energy.generated_kwh ?? NaN;
+  const monthBypassKwh = month?.energy.bypass_kwh ?? NaN;
 
   const now = new Date();
   const elapsed = now.getDate();
+  // Option A: derive avg daily bypass from GET /month (no new endpoint).
+  const bypassDailyAvg =
+    Number.isFinite(monthBypassKwh) && elapsed > 0
+      ? Math.max(0, monthBypassKwh / elapsed)
+      : 0;
   const dayOfYear =
     Math.floor(
       (now.getTime() - new Date(now.getFullYear(), 0, 1).getTime()) / 86400000,
@@ -171,6 +177,7 @@ export default function ForecastCard({
             todaySolarKwh,
             todayConsumedKwh,
             refDailySolar,
+            bypassDailyAvg,
           );
           if (live) setResult(f);
         } else if (period === "month") {
@@ -179,6 +186,7 @@ export default function ForecastCard({
             todaySolarKwh,
             todayConsumedKwh,
             refDailySolar,
+            bypassDailyAvg,
           );
           if (live) setResult(f);
         } else {
@@ -187,6 +195,7 @@ export default function ForecastCard({
             todaySolarKwh,
             todayConsumedKwh,
             refDailySolar,
+            bypassDailyAvg,
           );
           if (live) setResult(f);
         }
@@ -207,6 +216,7 @@ export default function ForecastCard({
     todayConsumedKwh,
     yearSolarKwh,
     refDailySolar,
+    bypassDailyAvg,
     missing,
     inputsLoading,
   ]);

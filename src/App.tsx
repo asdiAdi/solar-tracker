@@ -8,6 +8,7 @@ import ThemeSwitcher, { getInitialTheme } from "./components/ThemeSwitcher";
 import PeriodTabs from "./components/PeriodTabs";
 import DateSelector from "./components/DateSelector";
 import LiveCards from "./components/LiveCards";
+import BypassUpdatePage from "./components/BypassUpdatePage";
 import TotalsCards from "./components/TotalsCards";
 import CostCards from "./components/CostCards";
 import ForecastCard from "./components/ForecastCard";
@@ -21,6 +22,12 @@ const isoMonth = () => currentMonthISO();
 const isoYear = () => String(currentYear());
 
 export default function App() {
+  if (
+    typeof window !== "undefined" &&
+    window.location.pathname === "/bypass-update"
+  ) {
+    return <BypassUpdatePage />;
+  }
   const [period, setPeriod] = useState<Period>("day");
   const [day, setDay] = useState(isoDay());
   const [month, setMonth] = useState(isoMonth());

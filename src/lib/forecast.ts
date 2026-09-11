@@ -38,6 +38,7 @@ function estimateForecast(
   todaySolar: number,
   todayConsumed: number,
   refDailySolar: number,
+  bypassDailyAvg = 0,
 ): Forecast {
   const now = new Date();
   const todayStr = new Intl.DateTimeFormat("en-CA", {
@@ -95,15 +96,16 @@ function estimateForecast(
     ) || 365;
 
   const fullDayConsump = todayConsumed / progress;
+  const bypassDaily = Number.isFinite(bypassDailyAvg) ? Math.max(0, bypassDailyAvg) : 0;
 
   let yieldKwh = todaySolar + remainder;
-  let consumpKwh = fullDayConsump;
+  let consumpKwh = fullDayConsump + bypassDaily;
   let sunHours = sunH[todayIdx] ?? 5;
 
   if (period === "month") {
     const left = Math.max(0, dim - now.getDate());
     yieldKwh = soFarSolar + remainder + avgFuture * left;
-    consumpKwh = fullDayConsump * dim;
+    consumpKwh = fullDayConsump * dim + bypassDaily * dim;
     const slice = futureSun.slice(0, Math.max(1, left));
     sunHours = Number.isFinite(avg(slice)) ? avg(slice) : (sunH[todayIdx] ?? 5);
   }
@@ -111,7 +113,7 @@ function estimateForecast(
   if (period === "year") {
     const left = Math.max(0, daysInYear - dayOfYear);
     yieldKwh = soFarSolar + remainder + avgFuture * left;
-    consumpKwh = fullDayConsump * daysInYear;
+    consumpKwh = fullDayConsump * daysInYear + bypassDaily * daysInYear;
     sunHours = Number.isFinite(avg(sunH)) ? avg(sunH) : 5;
   }
 
@@ -125,6 +127,7 @@ export async function fetchDayForecast(
   todaySolarKwh: number,
   todayConsumedKwh: number,
   refDailySolar: number,
+  bypassDailyAvg = 0,
 ): Promise<Forecast | null> {
   try {
     return estimateForecast(
@@ -134,6 +137,7 @@ export async function fetchDayForecast(
       todaySolarKwh,
       todayConsumedKwh,
       refDailySolar,
+      bypassDailyAvg,
     );
   } catch {
     return null;
@@ -145,6 +149,7 @@ export async function fetchMonthForecast(
   todaySolarKwh: number,
   todayConsumedKwh: number,
   refDailySolar: number,
+  bypassDailyAvg = 0,
 ): Promise<Forecast | null> {
   try {
     return estimateForecast(
@@ -154,6 +159,7 @@ export async function fetchMonthForecast(
       todaySolarKwh,
       todayConsumedKwh,
       refDailySolar,
+      bypassDailyAvg,
     );
   } catch {
     return null;
@@ -165,6 +171,7 @@ export async function fetchYearForecast(
   todaySolarKwh: number,
   todayConsumedKwh: number,
   refDailySolar: number,
+  bypassDailyAvg = 0,
 ): Promise<Forecast | null> {
   try {
     return estimateForecast(
@@ -174,6 +181,7 @@ export async function fetchYearForecast(
       todaySolarKwh,
       todayConsumedKwh,
       refDailySolar,
+      bypassDailyAvg,
     );
   } catch {
     return null;

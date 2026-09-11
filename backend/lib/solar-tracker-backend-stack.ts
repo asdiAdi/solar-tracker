@@ -17,6 +17,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       timeToLiveAttribute: "expiresAt",
       removalPolicy: cdk.RemovalPolicy.RETAIN,
+      deletionProtection: true,
     });
 
     // work
@@ -35,6 +36,9 @@ export class SolarTrackerBackendStack extends cdk.Stack {
         GRID_PHP_PER_KWH: process.env.GRID_PHP_PER_KWH ?? "12",
         TABLE_NAME: table.tableName,
         ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN ?? "",
+        BYPASS_PASSWORD: process.env.BYPASS_PASSWORD ?? "",
+        BYPASS_LOOKBACK_COUNT: process.env.BYPASS_LOOKBACK_COUNT ?? "5",
+        BYPASS_LOOKBACK_DAYS: process.env.BYPASS_LOOKBACK_DAYS ?? "30",
       },
     });
     table.grantReadWriteData(fn);
@@ -45,7 +49,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       restApiName: "solar-tracker-backend",
       defaultCorsPreflightOptions: {
         allowOrigins: [(process.env.ALLOWED_ORIGIN ?? "").trim()],
-        allowMethods: ["GET"],
+        allowMethods: ["GET", "POST"],
         allowHeaders: ["Content-Type", "X-Api-Key"],
       },
     });
@@ -64,6 +68,11 @@ export class SolarTrackerBackendStack extends cdk.Stack {
           apiKeyRequired: true,
         });
     }
+    api.root
+      .addResource("bypass-update")
+      .addMethod("POST", new apigw.LambdaIntegration(fn), {
+        apiKeyRequired: true,
+      });
 
     new cdk.CfnOutput(this, "ApiUrl", { value: api.url });
     new cdk.CfnOutput(this, "TableName", { value: table.tableName });
