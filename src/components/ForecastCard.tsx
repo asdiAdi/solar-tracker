@@ -5,7 +5,7 @@ import {
   fetchYearForecast,
 } from "../lib/forecast";
 import { isNA, kwhParts, php, sunH } from "../lib/format";
-import type { Period } from "../lib/types";
+import type { Period, PeriodResponse } from "../lib/types";
 import LoadingSpinner from "./LoadingSpinner";
 
 function Tiles({
@@ -86,24 +86,16 @@ function LoadingTiles() {
 
 export default function ForecastCard({
   period,
-  todaySolarKwh = NaN,
-  todayConsumedKwh = NaN,
-  todayNetPhp = NaN,
-  monthSolarKwh = NaN,
-  monthNetPhp = NaN,
-  yearSolarKwh = NaN,
-  yearNetPhp = NaN,
-  inputsLoading = false,
+  day,
+  month,
+  year,
+  fetching = false,
 }: {
   period: Period;
-  todaySolarKwh?: number;
-  todayConsumedKwh?: number;
-  todayNetPhp?: number;
-  monthSolarKwh?: number;
-  monthNetPhp?: number;
-  yearSolarKwh?: number;
-  yearNetPhp?: number;
-  inputsLoading?: boolean;
+  day: PeriodResponse | null;
+  month: PeriodResponse | null;
+  year: PeriodResponse | null;
+  fetching?: boolean;
 }) {
   const [result, setResult] = useState<{
     yieldKwh: number;
@@ -113,15 +105,52 @@ export default function ForecastCard({
   const [failed, setFailed] = useState(false);
   const [fetchingMeteo, setFetchingMeteo] = useState(false);
 
+  // All input math lives here so App.tsx stays clean.
+  const todaySolarKwh = day?.energy.generated_kwh ?? NaN;
+  const todayConsumedKwh = day?.energy.consumed_kwh ?? NaN;
+  const monthSolarKwh = month?.energy.generated_kwh ?? NaN;
+  const yearSolarKwh = year?.energy.generated_kwh ?? NaN;
+
+  const now = new Date();
+  const elapsed = now.getDate();
+  const dayOfYear =
+    Math.floor(
+      (now.getTime() - new Date(now.getFullYear(), 0, 1).getTime()) / 86400000,
+    ) + 1;
+
+  const monthRef =
+    elapsed > 1 &&
+    Number.isFinite(monthSolarKwh) &&
+    Number.isFinite(todaySolarKwh)
+      ? (monthSolarKwh - todaySolarKwh) / (elapsed - 1)
+      : todaySolarKwh;
+  const yearRef =
+    dayOfYear > 1 &&
+    Number.isFinite(yearSolarKwh) &&
+    Number.isFinite(todaySolarKwh)
+      ? (yearSolarKwh - todaySolarKwh) / (dayOfYear - 1)
+      : todaySolarKwh;
+  const refDailySolar =
+    period === "year"
+      ? Number.isFinite(yearRef) && yearRef >= 0
+        ? yearRef
+        : todaySolarKwh
+      : Number.isFinite(monthRef) && monthRef >= 0
+        ? monthRef
+        : todaySolarKwh;
+
   const missing =
     period === "day"
       ? isNA(todaySolarKwh) || isNA(todayConsumedKwh)
       : period === "month"
-        ? isNA(monthSolarKwh) ||
-          isNA(monthNetPhp) ||
-          isNA(todaySolarKwh) ||
-          isNA(todayConsumedKwh)
-        : isNA(yearSolarKwh) || isNA(yearNetPhp);
+        ? isNA(monthSolarKwh) || isNA(todaySolarKwh) || isNA(todayConsumedKwh)
+        : isNA(yearSolarKwh) || isNA(todaySolarKwh) || isNA(todayConsumedKwh);
+
+  const inputsLoading =
+    fetching ||
+    day == null ||
+    (period === "month" && month == null) ||
+    (period === "year" && year == null);
 
   useEffect(() => {
     if (inputsLoading || missing) {
@@ -141,36 +170,25 @@ export default function ForecastCard({
           const f = await fetchDayForecast(
             todaySolarKwh,
             todayConsumedKwh,
-            todayNetPhp,
+            refDailySolar,
           );
-          if (live)
-            setResult({
-              yieldKwh: f.yieldKwh,
-              billPhp: f.billPhp,
-              sunHours: f.sunHours,
-            });
+          if (live) setResult(f);
         } else if (period === "month") {
           const f = await fetchMonthForecast(
             monthSolarKwh,
             todaySolarKwh,
-            monthNetPhp,
             todayConsumedKwh,
-            todayNetPhp,
+            refDailySolar,
           );
-          if (live)
-            setResult({
-              yieldKwh: f.monthEndKwh,
-              billPhp: f.monthEndNetPhp,
-              sunHours: f.avgSunHours,
-            });
+          if (live) setResult(f);
         } else {
-          const f = await fetchYearForecast(yearSolarKwh, yearNetPhp);
-          if (live)
-            setResult({
-              yieldKwh: f.yearEndKwh,
-              billPhp: f.yearEndNetPhp,
-              sunHours: f.avgSunHours,
-            });
+          const f = await fetchYearForecast(
+            yearSolarKwh,
+            todaySolarKwh,
+            todayConsumedKwh,
+            refDailySolar,
+          );
+          if (live) setResult(f);
         }
       } catch {
         if (live) setFailed(true);
@@ -185,12 +203,10 @@ export default function ForecastCard({
   }, [
     period,
     monthSolarKwh,
-    monthNetPhp,
     todaySolarKwh,
     todayConsumedKwh,
-    todayNetPhp,
     yearSolarKwh,
-    yearNetPhp,
+    refDailySolar,
     missing,
     inputsLoading,
   ]);
