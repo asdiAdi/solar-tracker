@@ -16,13 +16,14 @@ const RATE = Number(process.env.GRID_PHP_PER_KWH ?? "12");
 const TZ = "Asia/Manila";
 const LIVE_TTL_SEC = 5 * 60;
 const HIST_CURRENT_TTL_SEC = 30 * 60;
-const LIVE_TTL_MS = LIVE_TTL_SEC * 1000;
-const HIST_TTL_MS = HIST_CURRENT_TTL_SEC * 1000;
+// const LIVE_TTL_MS = LIVE_TTL_SEC * 1000;
+// const HIST_TTL_MS = HIST_CURRENT_TTL_SEC * 1000;
 const TABLE = () => process.env.CACHE_TABLE_NAME ?? "";
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const pad = (n: number) => String(n).padStart(2, "0");
 
-// saved data
+// lazy initialization
+// Reuse the client across invocations within the same Lambda execution environment.
 let docClient: DynamoDBDocumentClient | null = null;
 function doc(): DynamoDBDocumentClient | null {
   if (!TABLE()) return null;
@@ -34,12 +35,7 @@ function doc(): DynamoDBDocumentClient | null {
   return docClient;
 }
 
-const memCache = new Map<string, { at: number; value: any }>();
-
-export function clearSolarTrackerCache() {
-  memCache.clear();
-}
-
+// get item from database
 async function ddbGet(key: string): Promise<any | undefined> {
   const c = doc();
   if (!c) return undefined;
@@ -61,6 +57,7 @@ async function ddbGet(key: string): Promise<any | undefined> {
   }
 }
 
+// set item from database
 async function ddbSet(key: string, value: any, ttlSec: number | null) {
   const c = doc();
   if (!c) return;
@@ -80,33 +77,6 @@ async function ddbSet(key: string, value: any, ttlSec: number | null) {
   } catch {
     // skip when save fails
   }
-}
-
-function memGet(key: string, ttlMs: number): any | undefined {
-  const e = memCache.get(key);
-  if (!e) return undefined;
-  if (Date.now() - e.at >= ttlMs) {
-    memCache.delete(key);
-    return undefined;
-  }
-  return e.value;
-}
-
-function memSet(key: string, value: any) {
-  memCache.set(key, { at: Date.now(), value });
-}
-
-async function cacheGet(key: string, ttlMs: number): Promise<any | undefined> {
-  if (TABLE()) return ddbGet(key);
-  return memGet(key, ttlMs);
-}
-
-async function cacheSet(key: string, value: any, ttlSec: number | null) {
-  if (TABLE()) {
-    await ddbSet(key, value, ttlSec);
-    return;
-  }
-  memSet(key, value);
 }
 
 // get from solar
@@ -132,33 +102,39 @@ async function sm(path: string, body: any) {
   return res.json() as any;
 }
 
-function fetchHistoricalRaw(sn: string, timeType: number, start: string, end: string) {
+function fetchHistoricalRaw(
+  deviceSn: string,
+  timeType: number,
+  startTime: string,
+  endTime: string,
+) {
   return sm("/device/v1.0/historical", {
-    deviceSn: sn,
+    deviceSn,
     timeType,
-    startTime: start,
-    endTime: end,
+    startTime,
+    endTime,
   });
 }
 
 async function fetchLiveFresh() {
   const body = await sm("/device/v1.0/currentData", { deviceSn: DEVICE_SN() });
-  await cacheSet("live", body, LIVE_TTL_SEC);
+  await ddbSet("live", body, LIVE_TTL_SEC);
   return body;
 }
 
 async function getLive() {
-  const hit = await cacheGet("live", LIVE_TTL_MS);
+  const hit = await ddbGet("live");
   if (hit) return hit;
   return fetchLiveFresh();
 }
 
-// math
+// Convert to number, default to 0 if invalid
 const num = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
 
+// Convert data list to a key-value map
 function kv(dataList: any[] = []) {
   const m: Record<string, string> = {};
   for (const d of dataList) if (d?.key) m[d.key] = d.value;
@@ -176,11 +152,52 @@ export function mapLive(body: any) {
   };
 }
 
-function listsFromRaw(raw: any): any[][] {
-  return (raw?.paramDataList ?? []).map((p: any) => p?.dataList ?? []);
+function costFor(energy: any) {
+  const consumed_php = Math.round(energy.consumed_kwh * RATE);
+  const bypass_php = Math.round(energy.bypass_kwh * RATE);
+  const solar_php = Math.round(energy.generated_kwh * RATE);
+  return {
+    consumed_php,
+    bypass_php,
+    solar_php,
+    net_php: consumed_php + bypass_php - solar_php,
+  };
 }
 
-export function sumHistorical(lists: any[][]) {
+// dates
+function manilaToday(offsetDays = 0) {
+  const f = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const [y, m, dd] = f
+    .format(new Date(Date.now() + offsetDays * 864e5))
+    .split("-")
+    .map(Number);
+  return { y, m, d: dd };
+}
+
+function todayIso() {
+  const t = manilaToday();
+  return `${t.y}-${pad(t.m)}-${pad(t.d)}`;
+}
+
+function currentMonth() {
+  const t = manilaToday();
+  return `${t.y}-${pad(t.m)}`;
+}
+
+function currentYear() {
+  return manilaToday().y;
+}
+
+// aggregate
+export function sumHistorical(raw: any) {
+  const lists: [][] = (raw?.paramDataList ?? []).map(
+    (p: any) => p?.dataList ?? [],
+  );
   const t = {
     generated_kwh: 0,
     consumed_kwh: 0,
@@ -203,72 +220,37 @@ export function sumHistorical(lists: any[][]) {
   };
 }
 
-function costFor(energy: any) {
-  const consumed_php = Math.round(energy.consumed_kwh * RATE);
-  const bypass_php = Math.round(energy.bypass_kwh * RATE);
-  const solar_php = Math.round(energy.generated_kwh * RATE);
-  return {
-    consumed_php,
-    bypass_php,
-    solar_php,
-    net_php: consumed_php + bypass_php - solar_php,
-  };
-}
-
-// dates
-function manilaParts(d: Date) {
-  const f = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  const [y, m, dd] = f.format(d).split("-").map(Number);
-  return { y, m, d: dd };
-}
-
-function manilaToday(offsetDays = 0) {
-  return manilaParts(new Date(Date.now() + offsetDays * 864e5));
-}
-
-function todayIso() {
-  const t = manilaToday();
-  return `${t.y}-${pad(t.m)}-${pad(t.d)}`;
-}
-
-function currentMonth() {
-  const t = manilaToday();
-  return `${t.y}-${pad(t.m)}`;
-}
-
-function currentYear() {
-  return manilaToday().y;
-}
-
-// periods
+// Load from the cache if available; otherwise fetch and cache the result
 async function loadPeriod(
   key: string,
   ts: string,
   isCurrent: boolean,
   doFetch: () => Promise<any>,
 ) {
-  const hit = await cacheGet(key, HIST_TTL_MS);
+  const hit = await ddbGet(key);
   if (hit?.raw) {
-    return { energy: sumHistorical(listsFromRaw(hit.raw)), ts: hit.ts ?? ts };
+    return { energy: sumHistorical(hit.raw), ts: hit.ts ?? ts };
   }
   const raw = await doFetch();
-  await cacheSet(key, { raw, ts }, isCurrent ? HIST_CURRENT_TTL_SEC : null);
-  return { energy: sumHistorical(listsFromRaw(raw)), ts };
+  await ddbSet(key, { raw, ts }, isCurrent ? HIST_CURRENT_TTL_SEC : null);
+  return { energy: sumHistorical(raw), ts };
 }
 
+// helper
 function dayInfo(date: string | undefined, offset: number) {
   const base = date ?? todayIso();
   const [y, m, d] = base.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + offset));
   const iso = `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
-  return { key: `day:${iso}`, ts: `${iso}T00:00:00+08:00`, isCurrent: iso === todayIso(), iso };
+  return {
+    key: `day:${iso}`,
+    ts: `${iso}T00:00:00+08:00`,
+    isCurrent: iso === todayIso(),
+    iso,
+  };
 }
 
+// helper
 function monthInfo(month: string | undefined, offset: number) {
   const base = month ?? currentMonth();
   let [y, m] = base.split("-").map(Number);
@@ -276,7 +258,12 @@ function monthInfo(month: string | undefined, offset: number) {
   y = Math.floor(tot / 12);
   m = (tot % 12) + 1;
   const mm = `${y}-${pad(m)}`;
-  return { key: `month:${mm}`, ts: `${mm}-01T00:00:00+08:00`, isCurrent: mm === currentMonth(), mm };
+  return {
+    key: `month:${mm}`,
+    ts: `${mm}-01T00:00:00+08:00`,
+    isCurrent: mm === currentMonth(),
+    mm,
+  };
 }
 
 async function energyFor(
@@ -289,11 +276,15 @@ async function energyFor(
   const sn = DEVICE_SN();
   if (kind === "day") {
     const p = dayInfo(date, offset);
-    return loadPeriod(p.key, p.ts, p.isCurrent, () => fetchHistoricalRaw(sn, 2, p.iso, p.iso));
+    return loadPeriod(p.key, p.ts, p.isCurrent, () =>
+      fetchHistoricalRaw(sn, 2, p.iso, p.iso),
+    );
   }
   if (kind === "month") {
     const p = monthInfo(month, offset);
-    return loadPeriod(p.key, p.ts, p.isCurrent, () => fetchHistoricalRaw(sn, 3, p.mm, p.mm));
+    return loadPeriod(p.key, p.ts, p.isCurrent, () =>
+      fetchHistoricalRaw(sn, 3, p.mm, p.mm),
+    );
   }
   const baseY = Number(year ?? currentYear()) + offset;
   const ts = `${baseY}-01-01T00:00:00+08:00`;
@@ -331,7 +322,8 @@ function isWarmerEvent(ev: any): boolean {
   if (ev.warmer === true) return true;
   if (ev.source === "aws.events") return true;
   if (ev["detail-type"] === "Scheduled Event") return true;
-  if (!("path" in ev) && !("rawPath" in ev) && !("httpMethod" in ev)) return true;
+  if (!("path" in ev) && !("rawPath" in ev) && !("httpMethod" in ev))
+    return true;
   return false;
 }
 
@@ -349,7 +341,10 @@ export const handler = async (ev: any): Promise<APIGatewayProxyResult> => {
     if (isWarmerEvent(ev)) {
       return json(200, { warmed: await warmCache() });
     }
-    const path = ((ev.path ?? "") as string).replace(/\/$/, "").split("/").pop();
+    const path = ((ev.path ?? "") as string)
+      .replace(/\/$/, "")
+      .split("/")
+      .pop();
     const q = (ev.queryStringParameters ?? {}) as Record<string, string>;
     const offset = Number(q.offset ?? "0") || 0;
     if (path === "live") {
@@ -362,7 +357,11 @@ export const handler = async (ev: any): Promise<APIGatewayProxyResult> => {
     }
     if (path === "day" || path === "month" || path === "year") {
       const r = await energyFor(path, q.date, q.month, q.year, offset);
-      return json(200, { timestamp: r.ts, energy: r.energy, cost: costFor(r.energy) });
+      return json(200, {
+        timestamp: r.ts,
+        energy: r.energy,
+        cost: costFor(r.energy),
+      });
     }
     return json(404, { error: "unknown route" });
   } catch (e: any) {
