@@ -13,7 +13,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
 
     // saved data
     const table = new dynamodb.TableV2(this, "SolarTrackerDb", {
-      tableName: "SolarTrackerCache",
+      tableName: "SolarTrackerDb",
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       timeToLiveAttribute: "expiresAt",
       removalPolicy: cdk.RemovalPolicy.RETAIN,

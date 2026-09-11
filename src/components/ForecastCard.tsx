@@ -1,175 +1,172 @@
 import { useEffect, useState } from "react";
-import { CONFIG } from "../config";
-import { fetchMonthForecast, type MonthForecast } from "../lib/forecast";
+import {
+  fetchDayForecast,
+  fetchMonthForecast,
+  fetchYearForecast,
+} from "../lib/forecast";
 import { isNA, kwhParts, php, sunH } from "../lib/format";
+import type { Period } from "../lib/types";
 import LoadingSpinner from "./LoadingSpinner";
 
+function Tiles({
+  yieldKwh,
+  billPhp,
+  sunHours,
+}: {
+  yieldKwh: number;
+  billPhp: number;
+  sunHours: number;
+}) {
+  const y = kwhParts(yieldKwh);
+  const yieldMissing = isNA(yieldKwh);
+  const billMissing = isNA(billPhp);
+  const sunMissing = isNA(sunHours);
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+      <div className="rounded-xl p-4 text-center" style={{ background: "var(--chip)" }}>
+        <div className="text-sm font-semibold muted">Projected Yield</div>
+        <div className="med-number mt-1" style={yieldMissing ? { color: "var(--bad)" } : undefined}>
+          {y.value}
+          {y.unit && <span className="unit">{y.unit}</span>}
+        </div>
+      </div>
+      <div className="rounded-xl p-4 text-center" style={{ background: "var(--chip)" }}>
+        <div className="text-sm font-semibold muted">Projected Bill</div>
+        <div className="med-number mt-1" style={billMissing ? { color: "var(--bad)" } : undefined}>
+          {php(billPhp)}
+        </div>
+      </div>
+      <div className="rounded-xl p-4 text-center" style={{ background: "var(--chip)" }}>
+        <div className="text-sm font-semibold muted">Sun average</div>
+        <div className="med-number mt-1" style={sunMissing ? { color: "var(--bad)" } : undefined}>
+          {sunH(sunHours)}
+          {!sunMissing && <span className="unit">h/day</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoadingTiles() {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+      {["Projected Yield", "Projected Bill", "Sun average"].map((t) => (
+        <div key={t} className="rounded-xl p-4 text-center" style={{ background: "var(--chip)" }}>
+          <div className="text-sm font-semibold muted">{t}</div>
+          <div className="med-number mt-1" style={{ color: "var(--muted)" }}>
+            <LoadingSpinner />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ForecastCard({
-  monthSolarKwh,
-  monthNetPhp,
-  todaySolarKwh,
-  todayConsumedKwh,
+  period,
+  todaySolarKwh = NaN,
+  todayConsumedKwh = NaN,
+  todayNetPhp = NaN,
+  monthSolarKwh = NaN,
+  monthNetPhp = NaN,
+  yearSolarKwh = NaN,
+  yearNetPhp = NaN,
   inputsLoading = false,
 }: {
-  monthSolarKwh: number;
-  monthNetPhp: number;
-  todaySolarKwh: number;
-  todayConsumedKwh: number;
+  period: Period;
+  todaySolarKwh?: number;
+  todayConsumedKwh?: number;
+  todayNetPhp?: number;
+  monthSolarKwh?: number;
+  monthNetPhp?: number;
+  yearSolarKwh?: number;
+  yearNetPhp?: number;
   inputsLoading?: boolean;
 }) {
-  const [fc, setFc] = useState<MonthForecast | null>(null);
+  const [result, setResult] = useState<{ yieldKwh: number; billPhp: number; sunHours: number } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [fetchingMeteo, setFetchingMeteo] = useState(false);
+
   const missing =
-    isNA(monthSolarKwh) || isNA(monthNetPhp) || isNA(todaySolarKwh) || isNA(todayConsumedKwh);
+    period === "day"
+      ? isNA(todaySolarKwh) || isNA(todayConsumedKwh)
+      : period === "month"
+        ? isNA(monthSolarKwh) || isNA(monthNetPhp) || isNA(todaySolarKwh) || isNA(todayConsumedKwh)
+        : isNA(yearSolarKwh) || isNA(yearNetPhp);
 
   useEffect(() => {
     if (inputsLoading || missing) {
-      setFc(null);
+      setResult(null);
+      setFailed(false);
+      setFetchingMeteo(false);
       return;
     }
     let live = true;
-    fetchMonthForecast(monthSolarKwh, todaySolarKwh, monthNetPhp, todayConsumedKwh).then(
-      (f) => {
-        if (live) setFc(f);
-      },
-    );
+    setFailed(false);
+    // Clear stale period result immediately so tab switches show loading, not old data.
+    setResult(null);
+    setFetchingMeteo(true);
+    const run = async () => {
+      try {
+        if (period === "day") {
+          const f = await fetchDayForecast(todaySolarKwh, todayConsumedKwh, todayNetPhp);
+          if (live) setResult({ yieldKwh: f.yieldKwh, billPhp: f.billPhp, sunHours: f.sunHours });
+        } else if (period === "month") {
+          const f = await fetchMonthForecast(monthSolarKwh, todaySolarKwh, monthNetPhp, todayConsumedKwh, todayNetPhp);
+          if (live)
+            setResult({ yieldKwh: f.monthEndKwh, billPhp: f.monthEndNetPhp, sunHours: f.avgSunHours });
+        } else {
+          const f = await fetchYearForecast(yearSolarKwh, yearNetPhp);
+          if (live) setResult({ yieldKwh: f.yearEndKwh, billPhp: f.yearEndNetPhp, sunHours: f.avgSunHours });
+        }
+      } catch {
+        if (live) setFailed(true);
+      } finally {
+        if (live) setFetchingMeteo(false);
+      }
+    };
+    void run();
     return () => {
       live = false;
     };
-  }, [monthSolarKwh, monthNetPhp, todaySolarKwh, todayConsumedKwh, missing, inputsLoading]);
+  }, [
+    period,
+    monthSolarKwh,
+    monthNetPhp,
+    todaySolarKwh,
+    todayConsumedKwh,
+    todayNetPhp,
+    yearSolarKwh,
+    yearNetPhp,
+    missing,
+    inputsLoading,
+  ]);
 
-  const fetching = !missing && !inputsLoading && !fc;
-  const showLoading = inputsLoading || fetching;
+  const showLoading = inputsLoading || fetchingMeteo || (!missing && !result && !failed);
   if (showLoading) {
     return (
-      <section className="card p-5" aria-label="Month forecast" aria-busy="true">
+      <section className="card p-5" aria-label="Forecast" aria-busy="true">
         <div className="eyebrow mb-1">
-          Forecast · End of month · <span className="inline-flex items-center gap-1.5 align-middle"><LoadingSpinner label="Forecast loading" /> Loading</span>
+          Forecast · <span className="inline-flex items-center gap-1.5 align-middle"><LoadingSpinner label="Forecast loading" /> Loading</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-          <div
-            className="rounded-xl p-4 text-center"
-            style={{ background: "var(--chip)" }}
-          >
-            <div className="text-sm font-semibold muted">Projected Yield</div>
-            <div className="med-number mt-1" style={{ color: "var(--muted)" }}>
-              <LoadingSpinner />
-            </div>
-          </div>
-          <div
-            className="rounded-xl p-4 text-center"
-            style={{ background: "var(--chip)" }}
-          >
-            <div className="text-sm font-semibold muted">Projected Bill</div>
-            <div className="med-number mt-1" style={{ color: "var(--muted)" }}><LoadingSpinner /></div>
-          </div>
-          <div
-            className="rounded-xl p-4 text-center"
-            style={{ background: "var(--chip)" }}
-          >
-            <div className="text-sm font-semibold muted">Sun average</div>
-            <div className="med-number mt-1" style={{ color: "var(--muted)" }}>
-              <LoadingSpinner />
-            </div>
-          </div>
-        </div>
-        <div className="formula mt-3">
-          Open-Meteo {CONFIG.LAT.toFixed(2)},{CONFIG.LON.toFixed(2)} ·{" "}
-          {CONFIG.SYSTEM_KWP} kW system
-        </div>
+        <LoadingTiles />
       </section>
     );
   }
 
-  if (missing || !fc) {
-    const p = missing || !fc ? { value: "N/A", unit: "" } : kwhParts(fc.monthEndKwh);
-    const bill = missing || !fc ? "N/A" : php(fc.monthEndNetPhp);
-    const sun = missing || !fc ? "N/A" : sunH(fc.avgSunHours);
-    const billMissing = missing || !fc || isNA(fc.monthEndNetPhp);
-    const yieldMissing = missing || !fc || isNA(fc.monthEndKwh);
-    const sunMissing = missing || !fc || isNA(fc.avgSunHours);
+  if (missing || failed || !result) {
     return (
-      <section className="card p-5" aria-label="Month forecast">
-        <div className="eyebrow mb-1">
-          Forecast · End of month{" "}
-          {fc && !missing ? (fc.usedFallback ? "· offline" : "· live weather") : "· N/A"}
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-          <div
-            className="rounded-xl p-4 text-center"
-            style={{ background: "var(--chip)" }}
-          >
-            <div className="text-sm font-semibold muted">Projected Yield</div>
-            <div className="med-number mt-1" style={yieldMissing ? { color: "var(--bad)" } : undefined}>
-              {p.value}
-              {p.unit && <span className="unit">{p.unit}</span>}
-            </div>
-          </div>
-          <div
-            className="rounded-xl p-4 text-center"
-            style={{ background: "var(--chip)" }}
-          >
-            <div className="text-sm font-semibold muted">Projected Bill</div>
-            <div className="med-number mt-1" style={billMissing ? { color: "var(--bad)" } : undefined}>{bill}</div>
-          </div>
-          <div
-            className="rounded-xl p-4 text-center"
-            style={{ background: "var(--chip)" }}
-          >
-            <div className="text-sm font-semibold muted">Sun average</div>
-            <div className="med-number mt-1" style={sunMissing ? { color: "var(--bad)" } : undefined}>
-              {sun}
-              {!sunMissing && <span className="unit">h/day</span>}
-            </div>
-          </div>
-        </div>
-        <div className="formula mt-3">
-          Open-Meteo {CONFIG.LAT.toFixed(2)},{CONFIG.LON.toFixed(2)} ·{" "}
-          {CONFIG.SYSTEM_KWP} kW system
-        </div>
+      <section className="card p-5" aria-label="Forecast">
+        <div className="eyebrow mb-1">Forecast</div>
+        <Tiles yieldKwh={NaN} billPhp={NaN} sunHours={NaN} />
       </section>
     );
   }
 
-  const p = kwhParts(fc.monthEndKwh);
   return (
-    <section className="card p-5" aria-label="Month forecast">
-      <div className="eyebrow mb-1">
-        Forecast · End of month{" "}
-        {fc.usedFallback ? "· offline" : "· live weather"}
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-        <div
-          className="rounded-xl p-4 text-center"
-          style={{ background: "var(--chip)" }}
-        >
-          <div className="text-sm font-semibold muted">Projected Yield</div>
-          <div className="med-number mt-1" style={isNA(fc.monthEndKwh) ? { color: "var(--bad)" } : undefined}>
-            {p.value}
-            {p.unit && <span className="unit">{p.unit}</span>}
-          </div>
-        </div>
-        <div
-          className="rounded-xl p-4 text-center"
-          style={{ background: "var(--chip)" }}
-        >
-          <div className="text-sm font-semibold muted">Projected Bill</div>
-          <div className="med-number mt-1" style={isNA(fc.monthEndNetPhp) ? { color: "var(--bad)" } : undefined}>{php(fc.monthEndNetPhp)}</div>
-        </div>
-        <div
-          className="rounded-xl p-4 text-center"
-          style={{ background: "var(--chip)" }}
-        >
-          <div className="text-sm font-semibold muted">Sun average</div>
-          <div className="med-number mt-1" style={isNA(fc.avgSunHours) ? { color: "var(--bad)" } : undefined}>
-            {sunH(fc.avgSunHours)}
-            {!isNA(fc.avgSunHours) && <span className="unit">h/day</span>}
-          </div>
-        </div>
-      </div>
-      <div className="formula mt-3">
-        Open-Meteo {CONFIG.LAT.toFixed(2)},{CONFIG.LON.toFixed(2)} ·{" "}
-        {CONFIG.SYSTEM_KWP} kW system
-      </div>
+    <section className="card p-5" aria-label="Forecast">
+      <div className="eyebrow mb-1">Forecast</div>
+      <Tiles yieldKwh={result.yieldKwh} billPhp={result.billPhp} sunHours={result.sunHours} />
     </section>
   );
 }
