@@ -14,11 +14,12 @@ const TOKEN = () => process.env.SOLARMAN_TOKEN ?? "";
 const DEVICE_SN = () => process.env.DEVICE_SN ?? "";
 const RATE = Number(process.env.GRID_PHP_PER_KWH ?? "12");
 const TZ = "Asia/Manila";
-const LIVE_TTL_SEC = 5 * 60;
-const HIST_CURRENT_TTL_SEC = 30 * 60;
-// const LIVE_TTL_MS = LIVE_TTL_SEC * 1000;
-// const HIST_TTL_MS = HIST_CURRENT_TTL_SEC * 1000;
-const TABLE = () => process.env.CACHE_TABLE_NAME ?? "";
+export const LIVE_TTL_SEC = 5 * 60;
+export const DAY_TTL_SEC = 5 * 60;
+export const MONTH_TTL_SEC = 60 * 60;
+export const YEAR_TTL_SEC = 24 * 60 * 60;
+const PAST_TTL_SEC = 365 * 24 * 60 * 60;
+const TABLE = () => process.env.TABLE_NAME ?? "";
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -165,17 +166,14 @@ function costFor(energy: any) {
 }
 
 // dates
-function manilaToday(offsetDays = 0) {
+function manilaToday() {
   const f = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   });
-  const [y, m, dd] = f
-    .format(new Date(Date.now() + offsetDays * 864e5))
-    .split("-")
-    .map(Number);
+  const [y, m, dd] = f.format(new Date(Date.now())).split("-").map(Number);
   return { y, m, d: dd };
 }
 
@@ -220,48 +218,49 @@ export function sumHistorical(raw: any) {
   };
 }
 
-// Load from the cache if available; otherwise fetch and cache the result
+// Load from the cache if available; otherwise fetch and cache the result.
 async function loadPeriod(
   key: string,
   ts: string,
-  isCurrent: boolean,
+  ttlSec: number | null,
   doFetch: () => Promise<any>,
 ) {
   const hit = await ddbGet(key);
   if (hit?.raw) {
-    return { energy: sumHistorical(hit.raw), ts: hit.ts ?? ts };
+    return { energy: sumHistorical(hit.raw), ts: hit.ts ?? ts, ttlSec };
   }
   const raw = await doFetch();
-  await ddbSet(key, { raw, ts }, isCurrent ? HIST_CURRENT_TTL_SEC : null);
-  return { energy: sumHistorical(raw), ts };
+  await ddbSet(key, { raw, ts }, ttlSec);
+  return { energy: sumHistorical(raw), ts, ttlSec };
 }
 
 // helper
-function dayInfo(date: string | undefined, offset: number) {
+function dayInfo(date: string | undefined) {
   const base = date ?? todayIso();
   const [y, m, d] = base.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + offset));
+  const dt = new Date(Date.UTC(y, m - 1, d));
   const iso = `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+  const isCurrent = iso === todayIso();
   return {
     key: `day:${iso}`,
     ts: `${iso}T00:00:00+08:00`,
-    isCurrent: iso === todayIso(),
+    isCurrent,
+    ttlSec: isCurrent ? DAY_TTL_SEC : null,
     iso,
   };
 }
 
 // helper
-function monthInfo(month: string | undefined, offset: number) {
+function monthInfo(month: string | undefined) {
   const base = month ?? currentMonth();
-  let [y, m] = base.split("-").map(Number);
-  const tot = y * 12 + (m - 1) + offset;
-  y = Math.floor(tot / 12);
-  m = (tot % 12) + 1;
+  const [y, m] = base.split("-").map(Number);
   const mm = `${y}-${pad(m)}`;
+  const isCurrent = mm === currentMonth();
   return {
     key: `month:${mm}`,
     ts: `${mm}-01T00:00:00+08:00`,
-    isCurrent: mm === currentMonth(),
+    isCurrent,
+    ttlSec: isCurrent ? MONTH_TTL_SEC : null,
     mm,
   };
 }
@@ -271,97 +270,87 @@ async function energyFor(
   date?: string,
   month?: string,
   year?: string,
-  offset = 0,
 ) {
   const sn = DEVICE_SN();
   if (kind === "day") {
-    const p = dayInfo(date, offset);
-    return loadPeriod(p.key, p.ts, p.isCurrent, () =>
+    const p = dayInfo(date);
+    return loadPeriod(p.key, p.ts, p.ttlSec, () =>
       fetchHistoricalRaw(sn, 2, p.iso, p.iso),
     );
   }
   if (kind === "month") {
-    const p = monthInfo(month, offset);
-    return loadPeriod(p.key, p.ts, p.isCurrent, () =>
+    const p = monthInfo(month);
+    return loadPeriod(p.key, p.ts, p.ttlSec, () =>
       fetchHistoricalRaw(sn, 3, p.mm, p.mm),
     );
   }
-  const baseY = Number(year ?? currentYear()) + offset;
+  const baseY = Number(year ?? currentYear());
   const ts = `${baseY}-01-01T00:00:00+08:00`;
-  return loadPeriod(`year:${baseY}`, ts, baseY === currentYear(), () =>
+  const isCurrent = baseY === currentYear();
+  return loadPeriod(`year:${baseY}`, ts, isCurrent ? YEAR_TTL_SEC : null, () =>
     fetchHistoricalRaw(sn, 4, String(baseY), String(baseY)),
   );
 }
 
-// warmer
-async function warmCache() {
-  const warmed: Record<string, boolean> = {};
-  try {
-    await fetchLiveFresh();
-    warmed.live = true;
-  } catch {
-    warmed.live = false;
-  }
-  for (const [k, fn] of [
-    ["day", () => energyFor("day")],
-    ["month", () => energyFor("month")],
-    ["year", () => energyFor("year")],
-  ] as const) {
-    try {
-      await fn();
-      warmed[k] = true;
-    } catch {
-      warmed[k] = false;
-    }
-  }
-  return warmed;
-}
+const ALLOWED_ORIGIN = () => (process.env.ALLOWED_ORIGIN ?? "").trim();
 
-function isWarmerEvent(ev: any): boolean {
-  if (!ev || typeof ev !== "object") return false;
-  if (ev.warmer === true) return true;
-  if (ev.source === "aws.events") return true;
-  if (ev["detail-type"] === "Scheduled Event") return true;
-  if (!("path" in ev) && !("rawPath" in ev) && !("httpMethod" in ev))
-    return true;
-  return false;
+function corsOrigin(ev: any): string {
+  const allowed = ALLOWED_ORIGIN();
+  if (!allowed) return "*";
+  const headers = (ev?.headers ?? {}) as Record<string, string>;
+  const reqOrigin = headers.origin ?? headers.Origin ?? headers.ORIGIN ?? "";
+  if (reqOrigin && reqOrigin === allowed) return reqOrigin;
+  return allowed;
 }
 
 // main
 export const handler = async (ev: any): Promise<APIGatewayProxyResult> => {
-  const json = (s: number, b: any): APIGatewayProxyResult => ({
+  const origin = corsOrigin(ev);
+  const json = (
+    s: number,
+    b: any,
+    maxAgeSec?: number,
+  ): APIGatewayProxyResult => ({
     statusCode: s,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": origin,
+      Vary: "Origin",
+      ...(maxAgeSec != null
+        ? { "Cache-Control": `public, max-age=${maxAgeSec}` }
+        : {}),
     },
     body: JSON.stringify(b),
   });
   try {
-    if (isWarmerEvent(ev)) {
-      return json(200, { warmed: await warmCache() });
-    }
-    const path = ((ev.path ?? "") as string)
+    const path = ((ev.path ?? ev.rawPath ?? "") as string)
       .replace(/\/$/, "")
       .split("/")
       .pop();
     const q = (ev.queryStringParameters ?? {}) as Record<string, string>;
-    const offset = Number(q.offset ?? "0") || 0;
     if (path === "live") {
       const live = mapLive(await getLive());
       const t = manilaToday();
-      return json(200, {
-        timestamp: `${t.y}-${pad(t.m)}-${pad(t.d)}T00:00:00+08:00`,
-        live,
-      });
+      return json(
+        200,
+        {
+          timestamp: `${t.y}-${pad(t.m)}-${pad(t.d)}T00:00:00+08:00`,
+          live,
+        },
+        LIVE_TTL_SEC,
+      );
     }
     if (path === "day" || path === "month" || path === "year") {
-      const r = await energyFor(path, q.date, q.month, q.year, offset);
-      return json(200, {
-        timestamp: r.ts,
-        energy: r.energy,
-        cost: costFor(r.energy),
-      });
+      const r = await energyFor(path, q.date, q.month, q.year);
+      return json(
+        200,
+        {
+          timestamp: r.ts,
+          energy: r.energy,
+          cost: costFor(r.energy),
+        },
+        r.ttlSec ?? PAST_TTL_SEC,
+      );
     }
     return json(404, { error: "unknown route" });
   } catch (e: any) {

@@ -4,7 +4,6 @@ import { getLive, getPeriod } from './lib/api'
 import { currentMonthISO, currentYear, todayISO } from './lib/date'
 import type { LiveResponse, Period, PeriodResponse } from './lib/types'
 import { DEFAULT_COST, DEFAULT_ENERGY, DEFAULT_LIVE } from './lib/types'
-import { LIVE_TTL_MS, PERIOD_TTL_MS, cacheKeyFor, isFresh, readCache, writeCache } from './lib/cache'
 import ThemeSwitcher, { getInitialTheme } from './components/ThemeSwitcher'
 import PeriodTabs from './components/PeriodTabs'
 import DateSelector from './components/DateSelector'
@@ -12,6 +11,10 @@ import LiveCards from './components/LiveCards'
 import TotalsCards from './components/TotalsCards'
 import CostCards from './components/CostCards'
 import ForecastCard from './components/ForecastCard'
+
+// Backend is the single source of truth for caching (Dynamo TTLs + Cache-Control).
+// Frontend does plain fetches,no localStorage/memory TTL checks.
+const LIVE_POLL_MS = 5 * 60_000
 
 const isoDay = () => todayISO()
 const isoMonth = () => currentMonthISO()
@@ -32,40 +35,21 @@ export default function App() {
   const [year, setYear] = useState(isoYear())
   const [data, setData] = useState<Record<string, PeriodResponse>>({})
   const [dataAt, setDataAt] = useState<Record<string, number>>({})
-  const [live, setLive] = useState<LiveResponse | null>(() => readCache<LiveResponse>(cacheKeyFor('live'))?.value ?? null)
-  const [liveAt, setLiveAt] = useState<number | null>(() => readCache<LiveResponse>(cacheKeyFor('live'))?.at ?? null)
+  const [live, setLive] = useState<LiveResponse | null>(null)
+  const [liveAt, setLiveAt] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const inFlight = useRef<Set<string>>(new Set())
-  const liveAtRef = useRef<number | null>(null)
-  const dataRef = useRef<Record<string, PeriodResponse>>({})
-  const dataAtRef = useRef<Record<string, number>>({})
 
   useEffect(() => {
     document.documentElement.dataset.theme = getInitialTheme()
   }, [])
 
-  // Keep refs in sync for stable callbacks (avoids refetch loops)
-  useEffect(() => { liveAtRef.current = liveAt }, [liveAt])
-  useEffect(() => {
-    dataRef.current = data
-    dataAtRef.current = dataAt
-  }, [data, dataAt])
-
   const dateKey = period === 'day' ? day : period === 'month' ? month : year
   const cacheKey = `${period}:${dateKey}`
 
-  const fetchLive = useCallback(async (force = false, signal?: AbortSignal) => {
-    const key = cacheKeyFor('live')
-    if (!force) {
-      if (liveAtRef.current && isFresh(liveAtRef.current, LIVE_TTL_MS)) return
-      const cached = readCache<LiveResponse>(key)
-      if (cached && isFresh(cached.at, LIVE_TTL_MS)) {
-        setLive(cached.value)
-        setLiveAt(cached.at)
-        return
-      }
-    }
+  const fetchLive = useCallback(async (signal?: AbortSignal) => {
+    const key = 'live'
     if (inFlight.current.has(key)) return
     inFlight.current.add(key)
     try {
@@ -74,7 +58,6 @@ export default function App() {
       const at = Date.now()
       setLive(r)
       setLiveAt(at)
-      writeCache(key, r)
     } catch (e) {
       if ((e as Error)?.name === 'AbortError') return
       // keep stale live on error (caller decides whether to surface)
@@ -83,22 +66,9 @@ export default function App() {
     }
   }, [])
 
-  const fetchPeriod = useCallback(async (kind: Period, key: string, storageKey: string, force = false, signal?: AbortSignal) => {
-    if (!force) {
-      const at = dataAtRef.current[key]
-      if (at && isFresh(at, PERIOD_TTL_MS) && dataRef.current[key]) return
-      const cached = readCache<PeriodResponse>(storageKey)
-      if (cached && isFresh(cached.at, PERIOD_TTL_MS)) {
-        const ck = key
-        const cv = cached.value
-        const ca = cached.at
-        setData((d) => (d[ck] ? d : { ...d, [ck]: cv }))
-        setDataAt((d) => (d[ck] ? d : { ...d, [ck]: ca }))
-        return
-      }
-    }
-    if (inFlight.current.has(storageKey)) return
-    inFlight.current.add(storageKey)
+  const fetchPeriod = useCallback(async (kind: Period, key: string, signal?: AbortSignal) => {
+    if (inFlight.current.has(key)) return
+    inFlight.current.add(key)
     try {
       setError(null)
       const dateArg = key.split(':').slice(1).join(':')
@@ -107,55 +77,63 @@ export default function App() {
       const at = Date.now()
       setData((d) => ({ ...d, [key]: r }))
       setDataAt((d) => ({ ...d, [key]: at }))
-      writeCache(storageKey, r)
     } catch (e) {
       if ((e as Error)?.name === 'AbortError') return
       setError(String(e))
     } finally {
-      inFlight.current.delete(storageKey)
+      inFlight.current.delete(key)
     }
   }, [])
 
   // Live: fetch once on mount, then every 5 min. Not tied to date browsing.
   useEffect(() => {
     const ctrl = new AbortController()
-    void fetchLive(false, ctrl.signal)
-    const t = setInterval(() => { void fetchLive(true) }, LIVE_TTL_MS)
+    void fetchLive(ctrl.signal)
+    const t = setInterval(() => { void fetchLive() }, LIVE_POLL_MS)
     return () => {
       ctrl.abort()
       clearInterval(t)
     }
   }, [fetchLive])
 
-  // Period: fetch only active period/dateKey, skip if fresh (memory or localStorage).
+  // Period: fetch active period/dateKey on change. No freshness checks.
   useEffect(() => {
     const ctrl = new AbortController()
-    const storageKey = cacheKeyFor(period, dateKey)
-    void fetchPeriod(period, cacheKey, storageKey, false, ctrl.signal)
+    void fetchPeriod(period, cacheKey, ctrl.signal)
     return () => { ctrl.abort() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period, dateKey])
 
+  // Forecast needs current month + today even when viewing other dates — fetch directly.
+  useEffect(() => {
+    if (period !== 'month') return
+    const ctrl = new AbortController()
+    const todayKey = `day:${isoDay()}`
+    const monthKey = `month:${month}`
+    void fetchPeriod('day', todayKey, ctrl.signal)
+    if (monthKey !== todayKey) void fetchPeriod('month', monthKey, ctrl.signal)
+    return () => { ctrl.abort() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, month])
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true)
     try {
-      const storageKey = cacheKeyFor(period, dateKey)
       await Promise.all([
-        fetchLive(true),
-        fetchPeriod(period, cacheKey, storageKey, true),
+        fetchLive(),
+        fetchPeriod(period, cacheKey),
       ])
     } finally {
       setRefreshing(false)
     }
-  }, [fetchLive, fetchPeriod, period, dateKey, cacheKey])
+  }, [fetchLive, fetchPeriod, period, cacheKey])
 
-  const cur = data[cacheKey] ?? readCache<PeriodResponse>(cacheKeyFor(period, dateKey))?.value ?? null
-  const curAt = dataAt[cacheKey] ?? readCache<PeriodResponse>(cacheKeyFor(period, dateKey))?.at ?? null
-  // Forecast needs current month + today even when viewing other dates — read from cache, no extra fetch here.
+  const cur = data[cacheKey] ?? null
+  const curAt = dataAt[cacheKey] ?? null
   const monthCacheKey = `month:${month}`
   const dayCacheKey = `day:${day}`
-  const monthData = data[monthCacheKey] ?? readCache<PeriodResponse>(cacheKeyFor('month', month))?.value ?? null
-  const dayData = data[dayCacheKey] ?? readCache<PeriodResponse>(cacheKeyFor('day', day))?.value ?? null
+  const monthData = data[monthCacheKey] ?? null
+  const dayData = data[dayCacheKey] ?? null
   const liveValues = live?.live ?? DEFAULT_LIVE
   const energy = cur?.energy ?? DEFAULT_ENERGY
   const cost = cur?.cost ?? DEFAULT_COST

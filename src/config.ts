@@ -22,8 +22,6 @@ export const CONFIG = {
   },
 
   GRID_PHP_PER_KWH: 12.0,
-
-  BILLING_DAY_OFFSET: 0,
 } as const;
 
 export type AppConfig = typeof CONFIG;

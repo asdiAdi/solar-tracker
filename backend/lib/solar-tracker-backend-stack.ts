@@ -1,8 +1,6 @@
 import * as cdk from "aws-cdk-lib";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
-import * as events from "aws-cdk-lib/aws-events";
-import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
@@ -14,7 +12,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
     super(scope, id, props);
 
     // saved data
-    const cacheTable = new dynamodb.TableV2(this, "SolarTrackerCache", {
+    const table = new dynamodb.TableV2(this, "SolarTrackerDb", {
       tableName: "SolarTrackerCache",
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       timeToLiveAttribute: "expiresAt",
@@ -35,18 +33,20 @@ export class SolarTrackerBackendStack extends cdk.Stack {
         SOLARMAN_TOKEN: process.env.SOLARMAN_TOKEN ?? "",
         DEVICE_SN: process.env.DEVICE_SN ?? "",
         GRID_PHP_PER_KWH: process.env.GRID_PHP_PER_KWH ?? "12",
-        CACHE_TABLE_NAME: cacheTable.tableName,
+        TABLE_NAME: table.tableName,
+        ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN ?? "",
       },
     });
-    cacheTable.grantReadWriteData(fn);
+    table.grantReadWriteData(fn);
 
     // access
     // TODO: add custom domain name
     const api = new apigw.RestApi(this, "SolarTrackerApi", {
       restApiName: "solar-tracker-backend",
       defaultCorsPreflightOptions: {
-        allowOrigins: apigw.Cors.ALL_ORIGINS,
+        allowOrigins: [(process.env.ALLOWED_ORIGIN ?? "").trim()],
         allowMethods: ["GET"],
+        allowHeaders: ["Content-Type", "X-Api-Key"],
       },
     });
 
@@ -65,18 +65,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
         });
     }
 
-    // calls the fn every 5 minutes to update cache
-    const warmRule = new events.Rule(this, "SolarWarmRule", {
-      description: "Pre-warm SolarTracker DynamoDB cache",
-      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
-    });
-    warmRule.addTarget(
-      new targets.LambdaFunction(fn, {
-        event: events.RuleTargetInput.fromObject({ warmer: true }),
-      }),
-    );
-
     new cdk.CfnOutput(this, "ApiUrl", { value: api.url });
-    new cdk.CfnOutput(this, "CacheTableName", { value: cacheTable.tableName });
+    new cdk.CfnOutput(this, "TableName", { value: table.tableName });
   }
 }

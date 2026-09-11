@@ -32,16 +32,7 @@ export default defineConfig({
         ],
       },
       workbox: {
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/api\.open-meteo\.com\/.*/i,
-            handler: "StaleWhileRevalidate",
-            options: {
-              cacheName: "open-meteo",
-              expiration: { maxEntries: 20, maxAgeSeconds: 3600 },
-            },
-          },
-        ],
+        runtimeCaching: [],
       },
     }),
   ],

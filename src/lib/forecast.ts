@@ -14,32 +14,13 @@ export interface MonthForecast {
   usedFallback: boolean
 }
 
-const FORECAST_TTL_MS = 30 * 60_000;
-let forecastCache: { at: number; key: string; promise: Promise<MonthForecast> } | null = null;
-
-function forecastKey(
-  soFarSolarKwh: number,
-  todaySolarKwh: number,
-  soFarNetPhp: number,
-  todayConsumedKwh: number,
-): string {
-  const day = new Date().toISOString().slice(0, 10);
-  return `${day}|${soFarSolarKwh}|${todaySolarKwh}|${soFarNetPhp}|${todayConsumedKwh}`;
-}
-
 export async function fetchMonthForecast(
   soFarSolarKwh: number,
   todaySolarKwh: number,
   soFarNetPhp: number,
   todayConsumedKwh: number,
 ): Promise<MonthForecast> {
-  const key = forecastKey(soFarSolarKwh, todaySolarKwh, soFarNetPhp, todayConsumedKwh);
-  if (forecastCache && forecastCache.key === key && Date.now() - forecastCache.at < FORECAST_TTL_MS) {
-    return forecastCache.promise;
-  }
-  const promise = fetchMonthForecastInner(soFarSolarKwh, todaySolarKwh, soFarNetPhp, todayConsumedKwh);
-  forecastCache = { at: Date.now(), key, promise };
-  return promise;
+  return fetchMonthForecastInner(soFarSolarKwh, todaySolarKwh, soFarNetPhp, todayConsumedKwh);
 }
 
 async function fetchMonthForecastInner(
