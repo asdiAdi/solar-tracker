@@ -102,10 +102,10 @@ export default function ForecastCard({
     billPhp: number;
     sunHours: number;
   } | null>(null);
+
   const [failed, setFailed] = useState(false);
   const [fetchingMeteo, setFetchingMeteo] = useState(false);
 
-  // All input math lives here so App.tsx stays clean.
   const todaySolarKwh = day?.energy.generated_kwh ?? NaN;
   const todayConsumedKwh = day?.energy.consumed_kwh ?? NaN;
   const monthSolarKwh = month?.energy.generated_kwh ?? NaN;
@@ -114,7 +114,7 @@ export default function ForecastCard({
 
   const now = new Date();
   const elapsed = now.getDate();
-  // Option A: derive avg daily bypass from GET /month (no new endpoint).
+
   const bypassDailyAvg =
     Number.isFinite(monthBypassKwh) && elapsed > 0
       ? Math.max(0, monthBypassKwh / elapsed)

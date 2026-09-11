@@ -4,6 +4,7 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
+  ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
 
 // settings
@@ -20,6 +21,9 @@ export const MONTH_TTL_SEC = 60 * 60;
 export const YEAR_TTL_SEC = 24 * 60 * 60;
 const PAST_TTL_SEC = 365 * 24 * 60 * 60;
 const TABLE = () => process.env.TABLE_NAME ?? "";
+const BYPASS_PASSWORD = () => process.env.BYPASS_PASSWORD ?? "";
+const BYPASS_FAIL = "bypass-update failed";
+const BYPASS_PREFIX = "bypass:reading:";
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -265,6 +269,125 @@ function monthInfo(month: string | undefined) {
   };
 }
 
+// Bypass (cumulative grid meter not wired through solar). Sparse manual readings:
+// pk = "bypass:reading:YYYY-MM-DD", data = { cumulative_kwh, recordedAt }.
+type BypassReading = { iso: string; day: number; cum: number };
+
+function isoToDay(iso: string): number {
+  const [y, m, d] = iso.split("-").map(Number);
+  return Math.floor(Date.UTC(y, m - 1, d) / 86400000);
+}
+
+async function loadBypassReadings(): Promise<BypassReading[]> {
+  const c = doc();
+  if (!c) return [];
+  try {
+    const r = await c.send(
+      new ScanCommand({
+        TableName: TABLE(),
+        FilterExpression: "begins_with(pk, :p)",
+        ExpressionAttributeValues: { ":p": BYPASS_PREFIX },
+      }),
+    );
+    const out: BypassReading[] = [];
+    for (const it of (r.Items ?? []) as any[]) {
+      const iso = String(it.pk ?? "").slice(BYPASS_PREFIX.length);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) continue;
+      const cum = Number(it.data?.cumulative_kwh);
+      if (!Number.isFinite(cum) || cum < 0) continue;
+      out.push({ iso, day: isoToDay(iso), cum });
+    }
+    out.sort((a, b) => (a.day === b.day ? a.cum - b.cum : a.day - b.day));
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function bypassGlobalAvg(rs: BypassReading[]): number {
+  if (rs.length < 2) return 0;
+  const span = rs[rs.length - 1].day - rs[0].day;
+  if (span <= 0) return 0;
+  const v = (rs[rs.length - 1].cum - rs[0].cum) / span;
+  return v > 0 ? v : 0;
+}
+
+function bypassSegment(a: BypassReading, b: BypassReading, fb: number): number {
+  const span = b.day - a.day;
+  if (span <= 0) return fb;
+  const v = (b.cum - a.cum) / span;
+  return v > 0 ? v : 0;
+}
+
+function bypassDailyRate(rs: BypassReading[], iso: string): number {
+  const g = bypassGlobalAvg(rs);
+  if (rs.length < 2) return 0;
+  const t = isoToDay(iso);
+  const latest = rs[rs.length - 1];
+  if (iso.slice(0, 7) === latest.iso.slice(0, 7)) {
+    return bypassSegment(rs[rs.length - 2], latest, g);
+  }
+  let lower: BypassReading | undefined;
+  let upper: BypassReading | undefined;
+  for (const r of rs) {
+    if (r.day < t) lower = r;
+    if (r.day > t && !upper) upper = r;
+  }
+  if (lower && upper) return bypassSegment(lower, upper, g);
+  return g;
+}
+
+function bypassMonthRate(rs: BypassReading[], mm: string): number {
+  const g = bypassGlobalAvg(rs);
+  if (rs.length < 2) return 0;
+  const latest = rs[rs.length - 1];
+  if (mm === latest.iso.slice(0, 7)) {
+    return bypassSegment(rs[rs.length - 2], latest, g);
+  }
+  let lower: BypassReading | undefined;
+  let upper: BypassReading | undefined;
+  for (const r of rs) {
+    if (r.iso.slice(0, 7) < mm) lower = r;
+    if (r.iso.slice(0, 7) > mm && !upper) upper = r;
+  }
+  if (lower && upper) return bypassSegment(lower, upper, g);
+  return g;
+}
+
+function bypassYearRate(rs: BypassReading[], yyyy: string): number {
+  const g = bypassGlobalAvg(rs);
+  if (rs.length < 2) return 0;
+  let lower: BypassReading | undefined;
+  let upper: BypassReading | undefined;
+  for (const r of rs) {
+    if (r.iso.slice(0, 4) < yyyy) lower = r;
+    if (r.iso.slice(0, 4) > yyyy && !upper) upper = r;
+  }
+  if (lower && upper) return bypassSegment(lower, upper, g);
+  return g;
+}
+
+function bypassDaysInMonth(mm: string): number {
+  const [y, m] = mm.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+function bypassIsLeap(yyyy: string): boolean {
+  const y = Number(yyyy);
+  return y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+}
+
+function bypassMonthMult(mm: string): number {
+  const cur = currentMonth();
+  if (mm > cur) return 0;
+  if (mm === cur) return manilaToday().d;
+  return bypassDaysInMonth(mm);
+}
+
+function bypassYearMult(yyyy: string): number {
+  return bypassIsLeap(yyyy) ? 366 : 365;
+}
+
 async function energyFor(
   kind: "day" | "month" | "year",
   date?: string,
@@ -274,22 +397,36 @@ async function energyFor(
   const sn = DEVICE_SN();
   if (kind === "day") {
     const p = dayInfo(date);
-    return loadPeriod(p.key, p.ts, p.ttlSec, () =>
+    const r = await loadPeriod(p.key, p.ts, p.ttlSec, () =>
       fetchHistoricalRaw(sn, 2, p.iso, p.iso),
     );
+    const rs = await loadBypassReadings();
+    r.energy.bypass_kwh = r1(bypassDailyRate(rs, p.iso));
+    return r;
   }
   if (kind === "month") {
     const p = monthInfo(month);
-    return loadPeriod(p.key, p.ts, p.ttlSec, () =>
+    const r = await loadPeriod(p.key, p.ts, p.ttlSec, () =>
       fetchHistoricalRaw(sn, 3, p.mm, p.mm),
     );
+    const rs = await loadBypassReadings();
+    r.energy.bypass_kwh = r1(bypassMonthRate(rs, p.mm) * bypassMonthMult(p.mm));
+    return r;
   }
   const baseY = Number(year ?? currentYear());
   const ts = `${baseY}-01-01T00:00:00+08:00`;
   const isCurrent = baseY === currentYear();
-  return loadPeriod(`year:${baseY}`, ts, isCurrent ? YEAR_TTL_SEC : null, () =>
-    fetchHistoricalRaw(sn, 4, String(baseY), String(baseY)),
+  const r = await loadPeriod(
+    `year:${baseY}`,
+    ts,
+    isCurrent ? YEAR_TTL_SEC : null,
+    () => fetchHistoricalRaw(sn, 4, String(baseY), String(baseY)),
   );
+  const rs = await loadBypassReadings();
+  r.energy.bypass_kwh = r1(
+    bypassYearRate(rs, String(baseY)) * bypassYearMult(String(baseY)),
+  );
+  return r;
 }
 
 const ALLOWED_ORIGIN = () => (process.env.ALLOWED_ORIGIN ?? "").trim();
@@ -351,6 +488,30 @@ export const handler = async (ev: any): Promise<APIGatewayProxyResult> => {
         },
         r.ttlSec ?? PAST_TTL_SEC,
       );
+    }
+    if (path === "bypass-update") {
+      try {
+        const raw =
+          typeof ev.body === "string"
+            ? JSON.parse(ev.body || "{}")
+            : (ev.body ?? {});
+        const v = Number(raw?.cumulative_kwh);
+        const pw = String(raw?.password ?? "");
+        const expected = BYPASS_PASSWORD();
+        if (!expected || pw !== expected || !Number.isFinite(v) || v < 0) {
+          return json(400, { error: BYPASS_FAIL });
+        }
+        const iso = todayIso();
+        const recordedAt = new Date().toISOString();
+        await ddbSet(
+          `${BYPASS_PREFIX}${iso}`,
+          { cumulative_kwh: v, recordedAt },
+          null,
+        );
+        return json(200, { ok: true, recordedAt, cumulative_kwh: v });
+      } catch {
+        return json(400, { error: BYPASS_FAIL });
+      }
     }
     return json(404, { error: "unknown route" });
   } catch (e: any) {
