@@ -1,11 +1,24 @@
 import type { LiveValues } from "../lib/types";
 import { isNA, kwParts } from "../lib/format";
+import { CONFIG } from "../config";
 import LoadingSpinner from "./LoadingSpinner";
 
-function Power({ v, tone, loading }: { v: number; tone?: string; loading?: boolean }) {
+function Power({
+  v,
+  tone,
+  loading,
+}: {
+  v: number;
+  tone?: string;
+  loading?: boolean;
+}) {
   if (loading) {
     return (
-      <span className="big-number" style={{ color: "var(--muted)" }} aria-busy="true">
+      <span
+        className="big-number"
+        style={{ color: "var(--muted)" }}
+        aria-busy="true"
+      >
         <LoadingSpinner />
       </span>
     );
@@ -13,7 +26,10 @@ function Power({ v, tone, loading }: { v: number; tone?: string; loading?: boole
   const p = kwParts(v);
   const missing = isNA(v);
   return (
-    <span className="big-number" style={{ color: missing ? "var(--bad)" : tone }}>
+    <span
+      className="big-number"
+      style={{ color: missing ? "var(--bad)" : tone }}
+    >
       {p.value}
       {p.unit && <span className="unit">{p.unit}</span>}
     </span>
@@ -35,7 +51,10 @@ function EqualCard({
   loading?: boolean;
 }) {
   return (
-    <div className="card px-5 py-4 flex flex-col items-center gap-1 min-h-[132px] justify-center text-center" aria-busy={loading || undefined}>
+    <div
+      className="card px-5 py-4 flex flex-col items-center gap-1 min-h-[132px] justify-center text-center"
+      aria-busy={loading || undefined}
+    >
       <div className="eyebrow">{title}</div>
       <Power v={value} tone={tone} loading={loading} />
       <div className="text-sm muted font-medium">{caption}</div>
@@ -43,11 +62,48 @@ function EqualCard({
   );
 }
 
-export default function LiveCards({ live, loading = false }: { live: LiveValues; loading?: boolean }) {
+export default function LiveCards({
+  live,
+  loading = false,
+}: {
+  live: LiveValues;
+  loading?: boolean;
+}) {
   const socMissing = !loading && isNA(live.battery_soc_pct);
   const battMissing = !loading && isNA(live.battery_w);
   const charging = (live.battery_w ?? 0) >= 0;
   const pct = socMissing ? 0 : Math.max(0, Math.min(100, live.battery_soc_pct));
+  const roundedW = battMissing ? 0 : Math.round(live.battery_w);
+  const signedW = roundedW > 0 ? `+${roundedW} W` : `${roundedW} W`;
+  function fmtDuration(totalSecs: number): string {
+    const totalMins = Math.max(1, Math.round(totalSecs / 60));
+    const h = Math.floor(totalMins / 60);
+    const m = totalMins % 60;
+    if (h === 0) return `${m}m`;
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
+  }
+
+  function batteryEstimate(): string | null {
+    if (loading || socMissing || battMissing) return null;
+
+    const netW = roundedW;
+    const netCharging = netW >= 0;
+    const netAbs = Math.abs(netW);
+    if (pct >= CONFIG.BATTERY_FULL_PCT) return "Full";
+    if (!netCharging && pct <= CONFIG.BATTERY_RESERVE_PCT) return "At reserve";
+    if (netAbs < 50) return "Idle";
+    const delta = netCharging
+      ? CONFIG.BATTERY_FULL_PCT - pct
+      : pct - CONFIG.BATTERY_RESERVE_PCT;
+    if (delta <= 0) return netCharging ? "Full" : "At reserve";
+    const remainingKwh = (CONFIG.BATTERY_KWH * delta) / 100;
+    const secs = (remainingKwh * 1000 * 3600) / netAbs;
+    const dur = fmtDuration(secs);
+    return netCharging ? `${dur} to full` : `${dur} left`;
+  }
+
+  const estimate = batteryEstimate();
 
   return (
     <section aria-label="Right now" className="flex flex-col gap-4">
@@ -58,11 +114,19 @@ export default function LiveCards({ live, loading = false }: { live: LiveValues;
             className="text-xs font-bold px-2.5 py-1 rounded-full"
             style={{
               background: "var(--chip)",
-              color: loading ? "var(--muted)" : socMissing ? "var(--bad)" : charging ? "var(--good)" : "var(--warn)",
+              color: loading
+                ? "var(--muted)"
+                : socMissing
+                  ? "var(--bad)"
+                  : charging
+                    ? "var(--good)"
+                    : "var(--warn)",
             }}
           >
             {loading ? (
-              <span className="inline-flex items-center gap-1.5"><LoadingSpinner label="Battery loading" /> Loading</span>
+              <span className="inline-flex items-center gap-1.5">
+                <LoadingSpinner label="Battery loading" /> Loading
+              </span>
             ) : socMissing ? (
               "● N/A"
             ) : charging ? (
@@ -72,28 +136,53 @@ export default function LiveCards({ live, loading = false }: { live: LiveValues;
             )}
           </div>
         </div>
-        <div className="flex items-baseline gap-2 mt-2">
-          <span className="big-number" style={loading ? { color: "var(--muted)" } : socMissing ? { color: "var(--bad)" } : undefined}>
-            {loading ? (
-              <LoadingSpinner />
-            ) : socMissing ? (
-              "N/A"
-            ) : (
-              <>
-                {pct}
-                <span className="unit">%</span>
-              </>
-            )}
-          </span>
-          <span className="text-sm muted font-medium" style={loading ? undefined : battMissing ? { color: "var(--bad)" } : undefined}>
-            {loading ? (
-              <LoadingSpinner label="Battery power loading" />
-            ) : battMissing ? (
-              "N/A"
-            ) : (
-              `${Math.abs(Math.round(live.battery_w))} W ${charging ? "in" : "out"}`
-            )}
-          </span>
+        <div className="flex items-baseline justify-between gap-2 mt-2">
+          <div className="flex items-baseline gap-2">
+            <span
+              className="big-number"
+              style={
+                loading
+                  ? { color: "var(--muted)" }
+                  : socMissing
+                    ? { color: "var(--bad)" }
+                    : undefined
+              }
+            >
+              {loading ? (
+                <LoadingSpinner />
+              ) : socMissing ? (
+                "N/A"
+              ) : (
+                <>
+                  {pct}
+                  <span className="unit">%</span>
+                </>
+              )}
+            </span>
+            <span
+              className="text-sm muted font-medium"
+              style={
+                loading
+                  ? undefined
+                  : battMissing
+                    ? { color: "var(--bad)" }
+                    : undefined
+              }
+            >
+              {loading ? (
+                <LoadingSpinner label="Battery power loading" />
+              ) : battMissing ? (
+                "N/A"
+              ) : (
+                signedW
+              )}
+            </span>
+          </div>
+          {estimate != null && (
+            <span className="text-sm muted font-medium ml-auto text-right">
+              {estimate}
+            </span>
+          )}
         </div>
         <div
           className="w-full h-2.5 rounded-full mt-3 overflow-hidden"
@@ -106,12 +195,19 @@ export default function LiveCards({ live, loading = false }: { live: LiveValues;
         >
           <div
             className="h-full rounded-full transition-all"
-            style={{ width: `${loading ? 0 : pct}%`, background: loading ? "var(--muted)" : socMissing ? "var(--bad)" : "var(--good)" }}
+            style={{
+              width: `${loading ? 0 : pct}%`,
+              background: loading
+                ? "var(--muted)"
+                : socMissing
+                  ? "var(--bad)"
+                  : "var(--good)",
+            }}
           />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <EqualCard
           title="Solar"
           value={live.solar_w}
@@ -133,12 +229,6 @@ export default function LiveCards({ live, loading = false }: { live: LiveValues;
           status={"importing"}
           tone={"var(--warn)"}
           loading={loading}
-        />
-        <EqualCard
-          title="Bypass"
-          value={0}
-          caption={"bypassing"}
-          tone={"var(--bad)"}
         />
       </div>
     </section>

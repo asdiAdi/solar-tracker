@@ -17,6 +17,8 @@ export const CONFIG = {
 
   BATTERY_AH: 660,
   BATTERY_VOLTAGE: 52,
+  BATTERY_RESERVE_PCT: 20,
+  BATTERY_FULL_PCT: 100,
   get BATTERY_KWH() {
     return (this.BATTERY_AH * this.BATTERY_VOLTAGE) / 1000;
   },
