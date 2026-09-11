@@ -37,8 +37,6 @@ export class SolarTrackerBackendStack extends cdk.Stack {
         TABLE_NAME: table.tableName,
         ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN ?? "",
         BYPASS_PASSWORD: process.env.BYPASS_PASSWORD ?? "",
-        BYPASS_LOOKBACK_COUNT: process.env.BYPASS_LOOKBACK_COUNT ?? "5",
-        BYPASS_LOOKBACK_DAYS: process.env.BYPASS_LOOKBACK_DAYS ?? "30",
       },
     });
     table.grantReadWriteData(fn);
