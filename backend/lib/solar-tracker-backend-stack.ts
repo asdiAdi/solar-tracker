@@ -33,7 +33,6 @@ export class SolarTrackerBackendStack extends cdk.Stack {
           process.env.SOLARMAN_BASE_URL ?? "https://globalapi.solarmanpv.com",
         SOLARMAN_TOKEN: process.env.SOLARMAN_TOKEN ?? "",
         DEVICE_SN: process.env.DEVICE_SN ?? "",
-        GRID_PHP_PER_KWH: process.env.GRID_PHP_PER_KWH ?? "12",
         TABLE_NAME: table.tableName,
         ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN ?? "",
         BYPASS_PASSWORD: process.env.BYPASS_PASSWORD ?? "",
@@ -68,6 +67,11 @@ export class SolarTrackerBackendStack extends cdk.Stack {
     }
     api.root
       .addResource("bypass-update")
+      .addMethod("POST", new apigw.LambdaIntegration(fn), {
+        apiKeyRequired: true,
+      });
+    api.root
+      .addResource("rate-update")
       .addMethod("POST", new apigw.LambdaIntegration(fn), {
         apiKeyRequired: true,
       });

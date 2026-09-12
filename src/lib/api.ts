@@ -61,3 +61,32 @@ export async function postBypassUpdate(
     cumulative_kwh: number;
   }>;
 }
+
+export async function postRateUpdate(
+  year: string,
+  month: string,
+  rate: number,
+  password: string,
+): Promise<{ ok: boolean; month: string; rate: number }> {
+  const base = CONFIG.API_BASE_URL.replace(/\/$/, "");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (CONFIG.API_KEY) headers["x-api-key"] = CONFIG.API_KEY;
+  const r = await fetch(`${base}/rate-update`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ year, month, rate, password }),
+  });
+  if (!r.ok) {
+    let msg = `rate-update: ${r.status}`;
+    try {
+      const j = (await r.json()) as any;
+      if (j?.error) msg = j.error;
+    } catch {
+      // keep status message
+    }
+    throw new Error(msg);
+  }
+  return r.json() as Promise<{ ok: boolean; month: string; rate: number }>;
+}

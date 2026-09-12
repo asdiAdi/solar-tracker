@@ -1,4 +1,3 @@
-import { CONFIG } from "../config";
 import { isNA, php } from "../lib/format";
 import type { CostTotals, EnergyTotals } from "../lib/types";
 import LoadingSpinner from "./LoadingSpinner";
@@ -16,10 +15,13 @@ export default function CostCards({
   netLabel: string;
   loading?: boolean;
 }) {
-  const rate = CONFIG.GRID_PHP_PER_KWH;
+  const rate = cost.rate_php_per_kwh;
   const formula = (v: number) => {
     if (loading) return null;
-    return isNA(v) ? "N/A" : `${v.toFixed(1)} kWh × ₱${rate.toFixed(1)}/kWh`;
+    if (isNA(v)) return "N/A";
+    if (typeof rate !== "number" || !Number.isFinite(rate))
+      return `${v.toFixed(1)} kWh`;
+    return `${v.toFixed(1)} kWh × ₱${rate.toFixed(2)}/kWh`;
   };
   const solarMissing = !loading && isNA(cost.solar_php);
   const netMissing = !loading && isNA(cost.net_php);

@@ -22,8 +22,6 @@ export const CONFIG = {
   get BATTERY_KWH() {
     return (this.BATTERY_AH * this.BATTERY_VOLTAGE) / 1000;
   },
-
-  GRID_PHP_PER_KWH: 12.0,
 } as const;
 
 export type AppConfig = typeof CONFIG;

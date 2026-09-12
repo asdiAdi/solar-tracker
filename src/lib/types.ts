@@ -19,17 +19,20 @@ export interface CostTotals {
   bypass_php: number
   solar_php: number
   net_php: number
+  rate_php_per_kwh: number | null
 }
 
 export interface LiveResponse {
   timestamp: string
   live: LiveValues
+  elec_rate: number | null
 }
 
 export interface PeriodResponse {
   timestamp: string
   energy: EnergyTotals
   cost: CostTotals
+  elec_rate: number | null
 }
 
 export type Period = 'day' | 'month' | 'year'
@@ -57,4 +60,5 @@ export const DEFAULT_COST: CostTotals = {
   bypass_php: NA,
   solar_php: NA,
   net_php: NA,
+  rate_php_per_kwh: null,
 }

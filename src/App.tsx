@@ -9,6 +9,7 @@ import PeriodTabs from "./components/PeriodTabs";
 import DateSelector from "./components/DateSelector";
 import LiveCards from "./components/LiveCards";
 import BypassUpdatePage from "./components/BypassUpdatePage";
+import RateUpdatePage from "./components/RateUpdatePage";
 import TotalsCards from "./components/TotalsCards";
 import CostCards from "./components/CostCards";
 import ForecastCard from "./components/ForecastCard";
@@ -28,6 +29,16 @@ export default function App() {
   ) {
     return <BypassUpdatePage />;
   }
+  if (
+    typeof window !== "undefined" &&
+    window.location.pathname === "/rate-update"
+  ) {
+    return <RateUpdatePage />;
+  }
+  return <MainApp />;
+}
+
+function MainApp() {
   const [period, setPeriod] = useState<Period>("day");
   const [day, setDay] = useState(isoDay());
   const [month, setMonth] = useState(isoMonth());
@@ -248,6 +259,7 @@ export default function App() {
           month={monthData}
           year={yearData}
           fetching={isForecastFetching}
+          elecRate={live?.elec_rate ?? null}
         />
       </div>
     </div>

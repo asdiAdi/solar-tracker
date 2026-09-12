@@ -90,12 +90,14 @@ export default function ForecastCard({
   month,
   year,
   fetching = false,
+  elecRate = null,
 }: {
   period: Period;
   day: PeriodResponse | null;
   month: PeriodResponse | null;
   year: PeriodResponse | null;
   fetching?: boolean;
+  elecRate?: number | null;
 }) {
   const [result, setResult] = useState<{
     yieldKwh: number;
@@ -183,6 +185,7 @@ export default function ForecastCard({
             bypassDailyAvg,
             monthConsumedKwh,
             yearConsumedKwh,
+            elecRate,
           );
           if (live) setResult(f);
         } else if (period === "month") {
@@ -194,6 +197,7 @@ export default function ForecastCard({
             bypassDailyAvg,
             monthConsumedKwh,
             yearConsumedKwh,
+            elecRate,
           );
           if (live) setResult(f);
         } else {
@@ -205,6 +209,7 @@ export default function ForecastCard({
             bypassDailyAvg,
             monthConsumedKwh,
             yearConsumedKwh,
+            elecRate,
           );
           if (live) setResult(f);
         }
@@ -230,6 +235,7 @@ export default function ForecastCard({
     bypassDailyAvg,
     missing,
     inputsLoading,
+    elecRate,
   ]);
 
   const showLoading =

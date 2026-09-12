@@ -13,8 +13,8 @@ const BASE = (
 ).replace(/\/$/, "");
 const TOKEN = () => process.env.SOLARMAN_TOKEN ?? "";
 const DEVICE_SN = () => process.env.DEVICE_SN ?? "";
-const RATE = Number(process.env.GRID_PHP_PER_KWH ?? "12");
 const TZ = "Asia/Manila";
+const ELEC_RATE_PREFIX = "elec_rate:";
 export const LIVE_TTL_SEC = 5 * 60;
 export const DAY_TTL_SEC = 5 * 60;
 export const MONTH_TTL_SEC = 60 * 60;
@@ -157,16 +157,75 @@ export function mapLive(body: any) {
   };
 }
 
-function costFor(energy: any) {
-  const consumed_php = Math.round(energy.consumed_kwh * RATE);
-  const bypass_php = Math.round(energy.bypass_kwh * RATE);
-  const solar_php = Math.round(energy.generated_kwh * RATE);
+function costFor(energy: any, rate: number | null | undefined) {
+  const r = Number(rate);
+  const rate_php_per_kwh = Number.isFinite(r) && r > 0 ? r : null;
+  if (rate_php_per_kwh == null) {
+    return {
+      consumed_php: NaN,
+      bypass_php: NaN,
+      solar_php: NaN,
+      net_php: NaN,
+      rate_php_per_kwh: null,
+    };
+  }
+  const consumed_php = Math.round(Number(energy.consumed_kwh) * rate_php_per_kwh);
+  const bypass_php = Math.round(Number(energy.bypass_kwh) * rate_php_per_kwh);
+  const solar_php = Math.round(Number(energy.generated_kwh) * rate_php_per_kwh);
   return {
     consumed_php,
     bypass_php,
     solar_php,
     net_php: consumed_php + bypass_php - solar_php,
+    rate_php_per_kwh,
   };
+}
+
+type ElecRate = { mm: string; rate: number };
+
+async function loadElecRates(): Promise<ElecRate[]> {
+  const c = doc();
+  if (!c) return [];
+  try {
+    const r = await c.send(
+      new ScanCommand({
+        TableName: TABLE(),
+        FilterExpression: "begins_with(pk, :p)",
+        ExpressionAttributeValues: { ":p": ELEC_RATE_PREFIX },
+      }),
+    );
+    const out: ElecRate[] = [];
+    for (const it of (r.Items ?? []) as any[]) {
+      const mm = String(it.pk ?? "").slice(ELEC_RATE_PREFIX.length);
+      if (!/^\d{4}-\d{2}$/.test(mm)) continue;
+      const m = Number(mm.slice(5, 7));
+      if (m < 1 || m > 12) continue;
+      const rate = Number(it.data?.rate);
+      if (!Number.isFinite(rate) || rate <= 0) continue;
+      out.push({ mm, rate });
+    }
+    out.sort((a, b) => (a.mm < b.mm ? -1 : a.mm > b.mm ? 1 : 0));
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function latestElecRate(rs: ElecRate[]): number | null {
+  if (!rs.length) return null;
+  return rs[rs.length - 1].rate;
+}
+
+function rateForMonth(rs: ElecRate[], mm: string): number | null {
+  const exact = rs.find((r) => r.mm === mm);
+  if (exact) return exact.rate;
+  return latestElecRate(rs);
+}
+
+function avgRateForYear(rs: ElecRate[], yyyy: string): number | null {
+  const vals = rs.filter((r) => r.mm.startsWith(`${yyyy}-`)).map((r) => r.rate);
+  if (!vals.length) return latestElecRate(rs);
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
 }
 
 // dates
@@ -468,23 +527,31 @@ export const handler = async (ev: any): Promise<APIGatewayProxyResult> => {
     if (path === "live") {
       const live = mapLive(await getLive());
       const t = manilaToday();
+      const rates = await loadElecRates();
       return json(
         200,
         {
           timestamp: `${t.y}-${pad(t.m)}-${pad(t.d)}T00:00:00+08:00`,
           live,
+          elec_rate: latestElecRate(rates),
         },
         LIVE_TTL_SEC,
       );
     }
     if (path === "day" || path === "month" || path === "year") {
       const r = await energyFor(path, q.date, q.month, q.year);
+      const rates = await loadElecRates();
+      const rate =
+        path === "year"
+          ? avgRateForYear(rates, r.ts.slice(0, 4))
+          : rateForMonth(rates, r.ts.slice(0, 7));
       return json(
         200,
         {
           timestamp: r.ts,
           energy: r.energy,
-          cost: costFor(r.energy),
+          cost: costFor(r.energy, rate),
+          elec_rate: rate,
         },
         r.ttlSec ?? PAST_TTL_SEC,
       );
@@ -511,6 +578,45 @@ export const handler = async (ev: any): Promise<APIGatewayProxyResult> => {
         return json(200, { ok: true, recordedAt, cumulative_kwh: v });
       } catch {
         return json(400, { error: BYPASS_FAIL });
+      }
+    }
+    if (path === "rate-update") {
+      try {
+        const raw =
+          typeof ev.body === "string"
+            ? JSON.parse(ev.body || "{}")
+            : (ev.body ?? {});
+        const year = String(raw?.year ?? "").trim();
+        const month = String(raw?.month ?? raw?.mm ?? "")
+          .trim()
+          .padStart(2, "0");
+        const rate = Number(raw?.rate ?? raw?.elec_rate);
+        const pw = String(raw?.password ?? "");
+        const expected = BYPASS_PASSWORD();
+        const validYear =
+          /^\d{4}$/.test(year) && Number(year) >= 2000 && Number(year) <= 2100;
+        const mNum = Number(month);
+        const validMonth =
+          /^\d{2}$/.test(month) && mNum >= 1 && mNum <= 12;
+        if (
+          !expected ||
+          pw !== expected ||
+          !validYear ||
+          !validMonth ||
+          !Number.isFinite(rate) ||
+          rate <= 0
+        ) {
+          return json(400, { error: "rate-update failed" });
+        }
+        const mm = `${year}-${month}`;
+        await ddbSet(
+          `${ELEC_RATE_PREFIX}${mm}`,
+          { rate, updatedAt: new Date().toISOString() },
+          null,
+        );
+        return json(200, { ok: true, month: mm, rate });
+      } catch {
+        return json(400, { error: "rate-update failed" });
       }
     }
     return json(404, { error: "unknown route" });

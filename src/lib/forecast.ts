@@ -41,6 +41,7 @@ function estimateForecast(
   bypassDailyAvg = 0,
   monthConsumed: number = NaN,
   yearConsumed: number = NaN,
+  elecRatePhpPerKwh: number | null = null,
 ): Forecast {
   const now = new Date();
   const todayStr = new Intl.DateTimeFormat("en-CA", {
@@ -137,8 +138,10 @@ function estimateForecast(
     sunHours = Number.isFinite(avg(sunH)) ? avg(sunH) : 5;
   }
 
-  // Negative = saved/credit, positive = paid.
-  const billPhp = (consumpKwh - yieldKwh) * CONFIG.GRID_PHP_PER_KWH;
+  const billPhp =
+    typeof elecRatePhpPerKwh === "number" && Number.isFinite(elecRatePhpPerKwh)
+      ? (consumpKwh - yieldKwh) * elecRatePhpPerKwh
+      : NaN;
 
   return { yieldKwh, billPhp, sunHours };
 }
@@ -150,6 +153,7 @@ export async function fetchDayForecast(
   bypassDailyAvg = 0,
   monthConsumedKwh: number = NaN,
   yearConsumedKwh: number = NaN,
+  elecRatePhpPerKwh: number | null = null,
 ): Promise<Forecast | null> {
   try {
     return estimateForecast(
@@ -162,6 +166,7 @@ export async function fetchDayForecast(
       bypassDailyAvg,
       monthConsumedKwh,
       yearConsumedKwh,
+      elecRatePhpPerKwh,
     );
   } catch {
     return null;
@@ -176,6 +181,7 @@ export async function fetchMonthForecast(
   bypassDailyAvg = 0,
   monthConsumedKwh: number = NaN,
   yearConsumedKwh: number = NaN,
+  elecRatePhpPerKwh: number | null = null,
 ): Promise<Forecast | null> {
   try {
     return estimateForecast(
@@ -188,6 +194,7 @@ export async function fetchMonthForecast(
       bypassDailyAvg,
       monthConsumedKwh,
       yearConsumedKwh,
+      elecRatePhpPerKwh,
     );
   } catch {
     return null;
@@ -202,6 +209,7 @@ export async function fetchYearForecast(
   bypassDailyAvg = 0,
   monthConsumedKwh: number = NaN,
   yearConsumedKwh: number = NaN,
+  elecRatePhpPerKwh: number | null = null,
 ): Promise<Forecast | null> {
   try {
     return estimateForecast(
@@ -214,6 +222,7 @@ export async function fetchYearForecast(
       bypassDailyAvg,
       monthConsumedKwh,
       yearConsumedKwh,
+      elecRatePhpPerKwh,
     );
   } catch {
     return null;

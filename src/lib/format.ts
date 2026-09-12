@@ -1,5 +1,3 @@
-import { CONFIG } from '../config'
-
 export const isNA = (n: unknown) => typeof n !== 'number' || !Number.isFinite(n)
 
 export const php = (n: number) => {
@@ -18,10 +16,3 @@ export const kwhParts = (n: number) =>
 
 export const kwh1 = (n: number) => (isNA(n) ? 'N/A' : `${n.toFixed(1)} kWh`)
 export const sunH = (n: number) => (isNA(n) ? 'N/A' : n.toFixed(1))
-
-export const gridCost = (gridImportKwh: number) =>
-  gridImportKwh * CONFIG.GRID_PHP_PER_KWH
-
-export const savedVsGrid = (generatedKwh: number) => {
-  return Math.max(0, generatedKwh) * CONFIG.GRID_PHP_PER_KWH
-}
