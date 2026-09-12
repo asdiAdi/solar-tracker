@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CONFIG } from "./config";
 import { getLive, getPeriod } from "./lib/api";
 import { currentMonthISO, currentYear, todayISO } from "./lib/date";
@@ -13,6 +13,7 @@ import CostCards from "./components/CostCards";
 import ForecastCard from "./components/ForecastCard";
 
 const NA = Number.NaN;
+
 const DEFAULT_LIVE: LiveValues = {
   solar_w: NA,
   home_w: NA,
@@ -37,31 +38,43 @@ const DEFAULT_COST: CostTotals = {
   rate_php_per_kwh: null,
 };
 
-const isoDay = () => todayISO();
-const isoMonth = () => currentMonthISO();
-const isoYear = () => String(currentYear());
+const ROUTES: Record<string, React.ComponentType> = {
+  "/bypass-update": BypassUpdatePage,
+  "/rate-update": RateUpdatePage,
+};
+
+const keyFor = (kind: Period, value: string) => `${kind}:${value}`;
+
+const currentKeys = () => ({
+  day: keyFor("day", todayISO()),
+  month: keyFor("month", currentMonthISO()),
+  year: keyFor("year", String(currentYear())),
+});
+
+const PERIOD_LABEL: Record<Period, (selected: string) => string> = {
+  day: (selected) => (selected === todayISO() ? "Today" : selected),
+  month: (selected) =>
+    selected === currentMonthISO() ? "This month" : selected,
+  year: () => String(currentYear()),
+};
+
+const NET_LABEL: Record<Period, string> = {
+  day: "Today's net",
+  month: "Month net",
+  year: "Year net",
+};
 
 export default function App() {
-  if (
-    typeof window !== "undefined" &&
-    window.location.pathname === "/bypass-update"
-  ) {
-    return <BypassUpdatePage />;
-  }
-  if (
-    typeof window !== "undefined" &&
-    window.location.pathname === "/rate-update"
-  ) {
-    return <RateUpdatePage />;
-  }
-  return <MainApp />;
+  const path = typeof window !== "undefined" ? window.location.pathname : "";
+  const Route = ROUTES[path];
+  return Route ? <Route /> : <MainApp />;
 }
 
 function MainApp() {
   const [period, setPeriod] = useState<Period>("day");
-  const [day, setDay] = useState(isoDay());
-  const [month, setMonth] = useState(isoMonth());
-  const [year, setYear] = useState(isoYear());
+  const [day, setDay] = useState(todayISO());
+  const [month, setMonth] = useState(currentMonthISO());
+  const [year, setYear] = useState(String(currentYear()));
   const [data, setData] = useState<Record<string, PeriodResponse>>({});
   const [live, setLive] = useState<LiveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +86,7 @@ function MainApp() {
   }, []);
 
   const dateKey = period === "day" ? day : period === "month" ? month : year;
-  const cacheKey = `${period}:${dateKey}`;
+  const cacheKey = keyFor(period, dateKey);
 
   const fetchLive = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -82,7 +95,6 @@ function MainApp() {
       setLive(r);
     } catch (e) {
       if ((e as Error)?.name === "AbortError") return;
-      // keep stale live on error (caller decides whether to surface)
     }
   }, []);
 
@@ -91,7 +103,7 @@ function MainApp() {
       setPending((p) => ({ ...p, [key]: (p[key] ?? 0) + 1 }));
       try {
         setError(null);
-        const dateArg = key.split(":").slice(1).join(":");
+        const dateArg = key.slice(key.indexOf(":") + 1);
         const r = await getPeriod(kind, dateArg, signal);
         if (signal?.aborted) return;
         setData((d) => ({ ...d, [key]: r }));
@@ -100,94 +112,76 @@ function MainApp() {
         setError(String(e));
       } finally {
         setPending((p) => {
-          const n = (p[key] ?? 1) - 1;
-          if (n <= 0) {
-            const { [key]: _removed, ...rest } = p;
+          const remaining = (p[key] ?? 1) - 1;
+          if (remaining <= 0) {
+            const { [key]: _, ...rest } = p;
             return rest;
           }
-          return { ...p, [key]: n };
+          return { ...p, [key]: remaining };
         });
       }
     },
     [],
   );
 
-  // Period: fetch active period/dateKey on change.
   useEffect(() => {
     const ctrl = new AbortController();
     void fetchPeriod(period, cacheKey, ctrl.signal);
-    return () => {
-      ctrl.abort();
-    };
+    return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period, dateKey]);
 
   useEffect(() => {
     const ctrl = new AbortController();
-    const todayKey = `day:${isoDay()}`;
-    const monthKey = `month:${isoMonth()}`;
-    const yearKey = `year:${isoYear()}`;
+    const keys = currentKeys();
     if (period === "day") {
-      void fetchPeriod("day", todayKey, ctrl.signal);
+      void fetchPeriod("day", keys.day, ctrl.signal);
     } else if (period === "month") {
-      void fetchPeriod("day", todayKey, ctrl.signal);
-      void fetchPeriod("month", monthKey, ctrl.signal);
+      void fetchPeriod("day", keys.day, ctrl.signal);
+      void fetchPeriod("month", keys.month, ctrl.signal);
     } else {
-      void fetchPeriod("year", yearKey, ctrl.signal);
+      void fetchPeriod("year", keys.year, ctrl.signal);
     }
-    return () => {
-      ctrl.abort();
-    };
+    return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
+      const keys = currentKeys();
       const jobs: Promise<unknown>[] = [
         fetchLive(),
         fetchPeriod(period, cacheKey),
       ];
-      const todayKey = `day:${isoDay()}`;
-      const monthKey = `month:${isoMonth()}`;
-      const yearKey = `year:${isoYear()}`;
+
       if (period === "day") {
-        if (todayKey !== cacheKey) jobs.push(fetchPeriod("day", todayKey));
+        if (keys.day !== cacheKey) jobs.push(fetchPeriod("day", keys.day));
       } else if (period === "month") {
-        jobs.push(fetchPeriod("day", todayKey));
-        if (monthKey !== cacheKey) jobs.push(fetchPeriod("month", monthKey));
-      } else {
-        if (yearKey !== cacheKey) jobs.push(fetchPeriod("year", yearKey));
+        jobs.push(fetchPeriod("day", keys.day));
+        if (keys.month !== cacheKey)
+          jobs.push(fetchPeriod("month", keys.month));
+      } else if (keys.year !== cacheKey) {
+        jobs.push(fetchPeriod("year", keys.year));
       }
+
       await Promise.all(jobs);
     } finally {
       setRefreshing(false);
     }
   }, [fetchLive, fetchPeriod, period, cacheKey]);
 
+  const keys = useMemo(currentKeys, [dateKey]);
   const cur = data[cacheKey] ?? null;
-  const monthData = data[`month:${isoMonth()}`] ?? null;
-  const dayData = data[`day:${isoDay()}`] ?? null;
-  const yearData = data[`year:${isoYear()}`] ?? null;
+  const dayData = data[keys.day] ?? null;
+  const monthData = data[keys.month] ?? null;
+  const yearData = data[keys.year] ?? null;
+
   const liveValues = live?.live ?? DEFAULT_LIVE;
   const energy = cur?.energy ?? DEFAULT_ENERGY;
   const cost = cur?.cost ?? DEFAULT_COST;
-  const label =
-    period === "day"
-      ? day === isoDay()
-        ? "Today"
-        : day
-      : period === "month"
-        ? month === isoMonth()
-          ? "This month"
-          : month
-        : isoYear();
-  const netLabel =
-    period === "day"
-      ? "Today's net"
-      : period === "month"
-        ? "Month net"
-        : "Year net";
+  const label = PERIOD_LABEL[period](dateKey);
+  const netLabel = NET_LABEL[period];
 
   const isFetchingCur = (pending[cacheKey] ?? 0) > 0;
   const isLiveLoading = live == null;
@@ -206,11 +200,9 @@ function MainApp() {
               <span className="text-2xl" aria-hidden>
                 ☀️
               </span>
-              <div>
-                <h1 className="text-xl font-bold tracking-tight leading-none">
-                  {CONFIG.APP_NAME}
-                </h1>
-              </div>
+              <h1 className="text-xl font-bold tracking-tight leading-none">
+                {CONFIG.APP_NAME}
+              </h1>
             </div>
             <button
               type="button"
