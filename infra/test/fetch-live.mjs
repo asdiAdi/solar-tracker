@@ -8,7 +8,7 @@ dotenv.config();
 import { execSync } from 'node:child_process';
 
 execSync(
-  'npx esbuild lambda/solar-data.ts --bundle --platform=node --target=node20 --format=cjs --outfile=/tmp/solar-data.cjs --external:aws-sdk',
+  'npx esbuild infra/backend/lambda/solar-data.ts --bundle --platform=node --target=node24 --format=cjs --outfile=/tmp/solar-data.cjs --external:aws-sdk',
   { stdio: 'pipe' },
 );
 const { handler } = await import('/tmp/solar-data.cjs');

@@ -4,8 +4,6 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
-import * as dotenv from "dotenv";
-dotenv.config();
 
 export class SolarTrackerBackendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -24,7 +22,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
     const fn = new lambda.Function(this, "SolarDataFn", {
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "index.handler",
-      code: lambda.Code.fromAsset("dist-lambda"),
+      code: lambda.Code.fromAsset("infra/dist-lambda"),
       memorySize: 256,
       timeout: cdk.Duration.seconds(20),
       logRetention: logs.RetentionDays.ONE_WEEK,
