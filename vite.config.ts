@@ -11,7 +11,7 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg", "icons/*.svg"],
       manifest: {
-        name: "Solar Tracker - Solar Data",
+        name: "JATH Solar Tracker",
         short_name: "Solar Tracker",
         description:
           "Solar Tracker: battery, consumption, generated, grid + costs.",

@@ -38,9 +38,28 @@ jobs:
 
       - name: Build everything
         run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_LAT: ${{ secrets.VITE_LAT }}
+          VITE_LON: ${{ secrets.VITE_LON }}
+          VITE_TIMEZONE: ${{ secrets.VITE_TIMEZONE }}
+          VITE_X_API_KEY: ${{ secrets.VITE_X_API_KEY }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.CDK_DEFAULT_ACCOUNT }}
+          CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          SOLARMAN_TOKEN: ${{ secrets.SOLARMAN_TOKEN }}
+          DEVICE_SN: ${{ secrets.DEVICE_SN }}
+          ALLOWED_ORIGIN: ${{ secrets.ALLOWED_ORIGIN }}
+          BYPASS_PASSWORD: ${{ secrets.BYPASS_PASSWORD }}
 
       - name: Deploy backend stack
         run: npm run deploy
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.CDK_DEFAULT_ACCOUNT }}
+          CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          SOLARMAN_TOKEN: ${{ secrets.SOLARMAN_TOKEN }}
+          DEVICE_SN: ${{ secrets.DEVICE_SN }}
+          ALLOWED_ORIGIN: ${{ secrets.ALLOWED_ORIGIN }}
+          BYPASS_PASSWORD: ${{ secrets.BYPASS_PASSWORD }}
 
       - name: Sync static files to S3
         run: aws s3 sync dist/ s3://${{ secrets.S3_BUCKET }} --delete
