@@ -1,5 +1,4 @@
 import { isNA, php } from "../lib/format";
-import type { CostTotals, EnergyTotals } from "../lib/types";
 import LoadingSpinner from "./LoadingSpinner";
 
 export default function CostCards({
@@ -49,7 +48,7 @@ export default function CostCards({
             className="text-xl font-bold"
             style={{
               fontVariantNumeric: "tabular-nums",
-              color: loading ? "var(--muted)" : "var(--warn)",
+              color: loading ? "var(--muted)" : "var(--accent)",
             }}
           >
             {loading ? <LoadingSpinner /> : php(cost.consumed_php)}

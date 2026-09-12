@@ -1,4 +1,3 @@
-import type { LiveValues } from "../lib/types";
 import { isNA, kwParts } from "../lib/format";
 import { CONFIG } from "../config";
 import LoadingSpinner from "./LoadingSpinner";

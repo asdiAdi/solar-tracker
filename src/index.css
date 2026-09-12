@@ -41,13 +41,14 @@
   --card: #e6e9ef;
   --text: #2f3343;
   --muted: #5c5f77;
-  --border: #a6adbD;
+  --border: #a6adbd;
   --accent: #1e66f5;
   --good: #2a7a1f;
   --warn: #9c5f0f;
   --bad: #a50e36;
   --chip: #d3d7e0;
-  --shadow: 0 1px 2px rgba(76, 79, 105, 0.15), 0 4px 16px rgba(76, 79, 105, 0.12);
+  --shadow:
+    0 1px 2px rgba(76, 79, 105, 0.15), 0 4px 16px rgba(76, 79, 105, 0.12);
 }
 [data-theme="mocha"] {
   color-scheme: dark;
@@ -117,7 +118,7 @@
   --warn: #ebcb8b;
   --bad: #bf616a;
   --chip: #3b4252;
-  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 [data-theme="gruvbox"] {
   color-scheme: dark;
@@ -131,7 +132,7 @@
   --warn: #fabd2f;
   --bad: #fb4934;
   --chip: #3c3836;
-  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 [data-theme="everforest"] {
   color-scheme: dark;
@@ -145,7 +146,7 @@
   --warn: #dbbc7f;
   --bad: #e67e80;
   --chip: #3a4248;
-  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 [data-theme="solarized"] {
   color-scheme: dark;
@@ -159,7 +160,7 @@
   --warn: #b58900;
   --bad: #dc322f;
   --chip: #0b3d4a;
-  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 [data-theme="onedark"] {
   color-scheme: dark;
@@ -173,13 +174,19 @@
   --warn: #d19a66;
   --bad: #e06c75;
   --chip: #353b45;
-  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
 }
@@ -190,7 +197,9 @@ body {
   border-radius: 1rem;
   box-shadow: var(--shadow);
 }
-.muted { color: var(--muted); }
+.muted {
+  color: var(--muted);
+}
 .eyebrow {
   font-size: 0.75rem;
   font-weight: 700;
@@ -205,7 +214,8 @@ body {
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
-.big-number .unit, .med-number .unit {
+.big-number .unit,
+.med-number .unit {
   font-size: 0.42em;
   font-weight: 600;
   color: var(--muted);
@@ -230,7 +240,10 @@ body {
   border-radius: 0.9rem;
   box-shadow: var(--shadow);
 }
-input[type="date"], input[type="month"], input[type="number"], select {
+input[type="date"],
+input[type="month"],
+input[type="number"],
+select {
   color-scheme: dark;
 }
 /* Layout-stable loading spinner: 1em so it inherits .big-number/.med-number size
@@ -255,7 +268,9 @@ input[type="date"], input[type="month"], input[type="number"], select {
   animation: loading-spin 0.9s linear infinite;
 }
 @keyframes loading-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 .visually-hidden {
   position: absolute;

@@ -5,7 +5,6 @@ import {
   fetchYearForecast,
 } from "../lib/forecast";
 import { isNA, kwhParts, php, sunH } from "../lib/format";
-import type { Period, PeriodResponse } from "../lib/types";
 import LoadingSpinner from "./LoadingSpinner";
 
 function Tiles({

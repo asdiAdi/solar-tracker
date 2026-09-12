@@ -1,4 +1,3 @@
-import type { EnergyTotals } from "../lib/types";
 import { isNA, kwhParts } from "../lib/format";
 import LoadingSpinner from "./LoadingSpinner";
 
@@ -18,7 +17,11 @@ export default function TotalsCards({
     { t: "Bypassed", v: energy.bypass_kwh, tone: "var(--bad)" },
   ];
   return (
-    <section aria-label={`${label} energy totals`} className="card p-5" aria-busy={loading || undefined}>
+    <section
+      aria-label={`${label} energy totals`}
+      className="card p-5"
+      aria-busy={loading || undefined}
+    >
       <div className="eyebrow mb-3">Energy Data</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {items.map((i) => {
@@ -31,7 +34,16 @@ export default function TotalsCards({
               style={{ background: "var(--chip)" }}
             >
               <div className="text-sm font-semibold muted">{i.t}</div>
-              <div className="med-number mt-1" style={{ color: loading ? "var(--muted)" : missing ? "var(--bad)" : i.tone }}>
+              <div
+                className="med-number mt-1"
+                style={{
+                  color: loading
+                    ? "var(--muted)"
+                    : missing
+                      ? "var(--bad)"
+                      : i.tone,
+                }}
+              >
                 {loading ? (
                   <LoadingSpinner />
                 ) : (

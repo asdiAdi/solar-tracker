@@ -2,8 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { CONFIG } from "./config";
 import { getLive, getPeriod } from "./lib/api";
 import { currentMonthISO, currentYear, todayISO } from "./lib/date";
-import type { LiveResponse, Period, PeriodResponse } from "./lib/types";
-import { DEFAULT_COST, DEFAULT_ENERGY, DEFAULT_LIVE } from "./lib/types";
 import ThemeSwitcher, { getInitialTheme } from "./components/ThemeSwitcher";
 import PeriodTabs from "./components/PeriodTabs";
 import DateSelector from "./components/DateSelector";
@@ -14,9 +12,30 @@ import TotalsCards from "./components/TotalsCards";
 import CostCards from "./components/CostCards";
 import ForecastCard from "./components/ForecastCard";
 
-// Backend is the single source of truth for caching (Dynamo TTLs + Cache-Control).
-// Frontend does plain fetches,no localStorage/memory TTL checks.
-const LIVE_POLL_MS = 5 * 60_000;
+const NA = Number.NaN;
+const DEFAULT_LIVE: LiveValues = {
+  solar_w: NA,
+  home_w: NA,
+  grid_w: NA,
+  battery_w: NA,
+  battery_soc_pct: NA,
+};
+
+const DEFAULT_ENERGY: EnergyTotals = {
+  generated_kwh: NA,
+  consumed_kwh: NA,
+  grid_import_kwh: NA,
+  grid_export_kwh: NA,
+  bypass_kwh: NA,
+};
+
+const DEFAULT_COST: CostTotals = {
+  consumed_php: NA,
+  bypass_php: NA,
+  solar_php: NA,
+  net_php: NA,
+  rate_php_per_kwh: null,
+};
 
 const isoDay = () => todayISO();
 const isoMonth = () => currentMonthISO();
@@ -92,19 +111,6 @@ function MainApp() {
     },
     [],
   );
-
-  // Live: fetch once on mount, then every 5 min
-  useEffect(() => {
-    const ctrl = new AbortController();
-    void fetchLive(ctrl.signal);
-    const t = setInterval(() => {
-      void fetchLive();
-    }, LIVE_POLL_MS);
-    return () => {
-      ctrl.abort();
-      clearInterval(t);
-    };
-  }, [fetchLive]);
 
   // Period: fetch active period/dateKey on change.
   useEffect(() => {

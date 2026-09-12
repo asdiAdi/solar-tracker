@@ -1,5 +1,4 @@
 import { CONFIG } from "../config";
-import type { LiveResponse, PeriodResponse } from "./types";
 
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = {};
