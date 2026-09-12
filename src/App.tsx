@@ -124,6 +124,22 @@ function MainApp() {
     [],
   );
 
+  // autofetch live every 5 minutes
+  useEffect(() => {
+    const ctrl = new AbortController();
+    void fetchLive(ctrl.signal);
+    const id = setInterval(
+      () => {
+        void fetchLive();
+      },
+      5 * 60 * 1000,
+    );
+    return () => {
+      ctrl.abort();
+      clearInterval(id);
+    };
+  }, [fetchLive]);
+
   useEffect(() => {
     const ctrl = new AbortController();
     void fetchPeriod(period, cacheKey, ctrl.signal);
