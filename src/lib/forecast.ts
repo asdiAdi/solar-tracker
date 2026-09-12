@@ -1,9 +1,23 @@
 import { CONFIG } from "../config";
 
+export type ForecastPeriod = "day" | "month" | "year";
+
 export interface Forecast {
   yieldKwh: number;
   billPhp: number;
   sunHours: number;
+}
+
+export interface ForecastInputs {
+  period: ForecastPeriod;
+  periodSolarKwh: number;
+  todaySolarKwh: number;
+  todayConsumedKwh: number;
+  refDailySolarKwh: number;
+  bypassDailyAvgKwh?: number;
+  monthConsumedKwh?: number;
+  yearConsumedKwh?: number;
+  elecRatePhpPerKwh?: number | null;
 }
 
 interface Sky {
@@ -12,218 +26,226 @@ interface Sky {
   sunshine_duration?: number[];
 }
 
-const PAST_DAYS = 7;
+interface SkySeries {
+  sunHours: number[];
+  radiation: number[];
+  todayIndex: number;
+}
 
-async function getSky(): Promise<Sky> {
+const PAST_DAYS = 7;
+const FALLBACK_SUNSHINE_SECONDS = 18000;
+const FALLBACK_RADIATION = 15;
+const MIN_RADIATION_FOR_EFFICIENCY = 0.5;
+const SYSTEM_DERATE = 0.8;
+const FALLBACK_SUN_HOURS = 5;
+
+async function fetchSky(): Promise<Sky> {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${CONFIG.LAT}&longitude=${CONFIG.LON}` +
     `&daily=shortwave_radiation_sum,sunshine_duration&timezone=${encodeURIComponent(CONFIG.TIMEZONE)}&forecast_days=16&past_days=${PAST_DAYS}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error("meteo " + res.status);
+  if (!res.ok) throw new Error(`meteo ${res.status}`);
   const sky = ((await res.json()).daily ?? {}) as Sky;
   if (!sky.time?.length) throw new Error("empty sky");
   return sky;
 }
 
-function avg(nums: number[]): number {
-  const ok = nums.filter((n) => Number.isFinite(n));
-  if (!ok.length) return NaN;
-  return ok.reduce((a, b) => a + b, 0) / ok.length;
+function average(nums: number[]): number {
+  const finite = nums.filter((n) => Number.isFinite(n));
+  return finite.length
+    ? finite.reduce((a, b) => a + b, 0) / finite.length
+    : NaN;
 }
 
-function estimateForecast(
-  sky: Sky,
-  period: "day" | "month" | "year",
-  soFarSolar: number,
-  todaySolar: number,
-  todayConsumed: number,
-  refDailySolar: number,
-  bypassDailyAvg = 0,
-  monthConsumed: number = NaN,
-  yearConsumed: number = NaN,
-  elecRatePhpPerKwh: number | null = null,
-): Forecast {
-  const now = new Date();
-  const todayStr = new Intl.DateTimeFormat("en-CA", {
+function todayDateString(): string {
+  return new Intl.DateTimeFormat("en-CA", {
     timeZone: CONFIG.TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(now);
+  }).format(new Date());
+}
 
-  let todayIdx = sky.time.findIndex((t) => t === todayStr);
-  if (todayIdx < 0) todayIdx = PAST_DAYS;
+function daysInMonth(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
 
-  const sunH = sky.time.map(
-    (_, i) => (sky.sunshine_duration?.[i] ?? 18000) / 3600,
+function dayOfYear(date: Date): number {
+  return (
+    Math.floor(
+      (date.getTime() - new Date(date.getFullYear(), 0, 1).getTime()) /
+        86400000,
+    ) + 1
   );
-  const rad = sky.time.map((_, i) => sky.shortwave_radiation_sum?.[i] ?? 15);
+}
 
-  // Efficiency from PAST days, not today's partial ratio.
-  const pastRadAvg = avg(rad.slice(0, todayIdx));
-  const pastSolar = Number.isFinite(refDailySolar) ? refDailySolar : todaySolar;
-  const systemEff =
-    pastSolar /
-    Math.max(
-      0.5,
-      Number.isFinite(pastRadAvg) ? pastRadAvg : (rad[todayIdx] ?? 15),
+function daysInYear(date: Date): number {
+  return (
+    Math.round(
+      (new Date(date.getFullYear() + 1, 0, 1).getTime() -
+        new Date(date.getFullYear(), 0, 1).getTime()) /
+        86400000,
+    ) || 365
+  );
+}
+
+function fractionOfDayElapsed(date: Date): number {
+  const hours =
+    date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;
+  return Math.min(1, Math.max(1 / 24, hours / 24));
+}
+
+function buildSkySeries(sky: Sky): SkySeries {
+  const sunHours = sky.time.map(
+    (_, i) => (sky.sunshine_duration?.[i] ?? FALLBACK_SUNSHINE_SECONDS) / 3600,
+  );
+  const radiation = sky.time.map(
+    (_, i) => sky.shortwave_radiation_sum?.[i] ?? FALLBACK_RADIATION,
+  );
+  const foundIndex = sky.time.findIndex((t) => t === todayDateString());
+  const todayIndex = foundIndex >= 0 ? foundIndex : PAST_DAYS;
+  return { sunHours, radiation, todayIndex };
+}
+
+function estimateSystemEfficiency(
+  radiation: number[],
+  todayIndex: number,
+  refDailySolarKwh: number,
+  todaySolarKwh: number,
+): number {
+  const pastRadiationAvg = average(radiation.slice(0, todayIndex));
+  const referenceSolar = Number.isFinite(refDailySolarKwh)
+    ? refDailySolarKwh
+    : todaySolarKwh;
+  const denominator = Number.isFinite(pastRadiationAvg)
+    ? pastRadiationAvg
+    : (radiation[todayIndex] ?? FALLBACK_RADIATION);
+  return referenceSolar / Math.max(MIN_RADIATION_FOR_EFFICIENCY, denominator);
+}
+
+function periodDailyAverage(
+  periodConsumedKwh: number,
+  elapsedDays: number,
+  fallback: number,
+): number {
+  return Number.isFinite(periodConsumedKwh) && elapsedDays > 1
+    ? Math.max(0, periodConsumedKwh / elapsedDays)
+    : fallback;
+}
+
+function estimateForecast(
+  sky: Sky,
+  {
+    period,
+    periodSolarKwh,
+    todaySolarKwh,
+    todayConsumedKwh,
+    refDailySolarKwh,
+    bypassDailyAvgKwh,
+    monthConsumedKwh,
+    yearConsumedKwh,
+    elecRatePhpPerKwh,
+  }: Required<Omit<ForecastInputs, "elecRatePhpPerKwh">> & {
+    elecRatePhpPerKwh: number | null;
+  },
+): Forecast {
+  const now = new Date();
+  const { sunHours, radiation, todayIndex } = buildSkySeries(sky);
+  const systemEfficiency = estimateSystemEfficiency(
+    radiation,
+    todayIndex,
+    refDailySolarKwh,
+    todaySolarKwh,
+  );
+
+  const potentialYield = (i: number) =>
+    Math.min(
+      radiation[i] * systemEfficiency,
+      CONFIG.SYSTEM_KWP * sunHours[i] * SYSTEM_DERATE,
     );
 
-  const potential = (i: number) =>
-    Math.min(rad[i] * systemEff, CONFIG.SYSTEM_KWP * sunH[i] * 0.8);
+  const dayProgress = fractionOfDayElapsed(now);
+  const remainderToday = Math.max(
+    0,
+    potentialYield(todayIndex) * (1 - dayProgress),
+  );
 
-  // Rest-of-day shrinks to 0 at midnight, so yield > generated midday.
-  const hoursElapsed =
-    now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
-  const progress = Math.min(1, Math.max(1 / 24, hoursElapsed / 24));
-  const remainder = Math.max(0, potential(todayIdx) * (1 - progress));
+  const futurePotential = sky.time
+    .slice(todayIndex + 1)
+    .map((_, k) => potentialYield(todayIndex + 1 + k));
+  const avgFuturePotential = Number.isFinite(average(futurePotential))
+    ? average(futurePotential)
+    : potentialYield(todayIndex);
+  const futureSunHours = sunHours.slice(todayIndex + 1);
 
-  const futureKwh = sky.time
-    .slice(todayIdx + 1)
-    .map((_, k) => potential(todayIdx + 1 + k));
-  const avgFuture = Number.isFinite(avg(futureKwh))
-    ? avg(futureKwh)
-    : potential(todayIdx);
-  const futureSun = sunH.slice(todayIdx + 1);
-
-  const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const dayOfYear =
-    Math.floor(
-      (now.getTime() - new Date(now.getFullYear(), 0, 1).getTime()) / 86400000,
-    ) + 1;
-  const daysInYear =
-    Math.round(
-      (new Date(now.getFullYear() + 1, 0, 1).getTime() -
-        new Date(now.getFullYear(), 0, 1).getTime()) /
-        86400000,
-    ) || 365;
-
-  const fullDayConsump = todayConsumed / progress;
-  const bypassDaily = Number.isFinite(bypassDailyAvg)
-    ? Math.max(0, bypassDailyAvg)
+  const dayOfYearNow = dayOfYear(now);
+  const fullDayConsumption = todayConsumedKwh / dayProgress;
+  const bypassDaily = Number.isFinite(bypassDailyAvgKwh)
+    ? Math.max(0, bypassDailyAvgKwh)
     : 0;
 
-  const elapsed = now.getDate();
-  const monthDailyAvg =
-    Number.isFinite(monthConsumed) && elapsed > 1
-      ? Math.max(0, monthConsumed / elapsed)
-      : NaN;
-  const yearDailyAvg =
-    Number.isFinite(yearConsumed) && dayOfYear > 1
-      ? Math.max(0, yearConsumed / dayOfYear)
-      : NaN;
-  const dailyAvg = Number.isFinite(monthDailyAvg)
-    ? monthDailyAvg
-    : fullDayConsump;
-  const yearlyDaily = Number.isFinite(yearDailyAvg)
-    ? yearDailyAvg
-    : fullDayConsump;
+  const monthDailyAvg = periodDailyAverage(
+    monthConsumedKwh,
+    now.getDate(),
+    fullDayConsumption,
+  );
+  const yearDailyAvg = periodDailyAverage(
+    yearConsumedKwh,
+    dayOfYearNow,
+    fullDayConsumption,
+  );
 
-  let yieldKwh = todaySolar + remainder;
-  let consumpKwh = dailyAvg + bypassDaily;
-  let sunHours = sunH[todayIdx] ?? 5;
+  let yieldKwh = todaySolarKwh + remainderToday;
+  let consumptionKwh = monthDailyAvg + bypassDaily;
+  let sunHoursResult = sunHours[todayIndex] ?? FALLBACK_SUN_HOURS;
 
   if (period === "month") {
-    const left = Math.max(0, dim - now.getDate());
-    yieldKwh = soFarSolar + remainder + avgFuture * left;
-    consumpKwh = dailyAvg * dim + bypassDaily * dim;
-    const slice = futureSun.slice(0, Math.max(1, left));
-    sunHours = Number.isFinite(avg(slice)) ? avg(slice) : (sunH[todayIdx] ?? 5);
+    const monthLength = daysInMonth(now);
+    const remainingDays = Math.max(0, monthLength - now.getDate());
+    yieldKwh =
+      periodSolarKwh + remainderToday + avgFuturePotential * remainingDays;
+    consumptionKwh = monthDailyAvg * monthLength + bypassDaily * monthLength;
+    const upcomingSun = futureSunHours.slice(0, Math.max(1, remainingDays));
+    sunHoursResult = Number.isFinite(average(upcomingSun))
+      ? average(upcomingSun)
+      : (sunHours[todayIndex] ?? FALLBACK_SUN_HOURS);
   }
 
   if (period === "year") {
-    const left = Math.max(0, daysInYear - dayOfYear);
-    yieldKwh = soFarSolar + remainder + avgFuture * left;
-    consumpKwh = yearlyDaily * daysInYear + bypassDaily * daysInYear;
-    sunHours = Number.isFinite(avg(sunH)) ? avg(sunH) : 5;
+    const yearLength = daysInYear(now);
+    const remainingDays = Math.max(0, yearLength - dayOfYearNow);
+    yieldKwh =
+      periodSolarKwh + remainderToday + avgFuturePotential * remainingDays;
+    consumptionKwh = yearDailyAvg * yearLength + bypassDaily * yearLength;
+    sunHoursResult = Number.isFinite(average(sunHours))
+      ? average(sunHours)
+      : FALLBACK_SUN_HOURS;
   }
 
   const billPhp =
     typeof elecRatePhpPerKwh === "number" && Number.isFinite(elecRatePhpPerKwh)
-      ? (consumpKwh - yieldKwh) * elecRatePhpPerKwh
+      ? (consumptionKwh - yieldKwh) * elecRatePhpPerKwh
       : NaN;
 
-  return { yieldKwh, billPhp, sunHours };
+  return { yieldKwh, billPhp, sunHours: sunHoursResult };
 }
 
-export async function fetchDayForecast(
-  todaySolarKwh: number,
-  todayConsumedKwh: number,
-  refDailySolar: number,
-  bypassDailyAvg = 0,
-  monthConsumedKwh: number = NaN,
-  yearConsumedKwh: number = NaN,
-  elecRatePhpPerKwh: number | null = null,
+export async function fetchForecast(
+  inputs: ForecastInputs,
 ): Promise<Forecast | null> {
   try {
-    return estimateForecast(
-      await getSky(),
-      "day",
-      todaySolarKwh,
-      todaySolarKwh,
-      todayConsumedKwh,
-      refDailySolar,
-      bypassDailyAvg,
-      monthConsumedKwh,
-      yearConsumedKwh,
-      elecRatePhpPerKwh,
-    );
-  } catch {
-    return null;
-  }
-}
-
-export async function fetchMonthForecast(
-  monthSolarKwh: number,
-  todaySolarKwh: number,
-  todayConsumedKwh: number,
-  refDailySolar: number,
-  bypassDailyAvg = 0,
-  monthConsumedKwh: number = NaN,
-  yearConsumedKwh: number = NaN,
-  elecRatePhpPerKwh: number | null = null,
-): Promise<Forecast | null> {
-  try {
-    return estimateForecast(
-      await getSky(),
-      "month",
-      monthSolarKwh,
-      todaySolarKwh,
-      todayConsumedKwh,
-      refDailySolar,
-      bypassDailyAvg,
-      monthConsumedKwh,
-      yearConsumedKwh,
-      elecRatePhpPerKwh,
-    );
-  } catch {
-    return null;
-  }
-}
-
-export async function fetchYearForecast(
-  yearSolarKwh: number,
-  todaySolarKwh: number,
-  todayConsumedKwh: number,
-  refDailySolar: number,
-  bypassDailyAvg = 0,
-  monthConsumedKwh: number = NaN,
-  yearConsumedKwh: number = NaN,
-  elecRatePhpPerKwh: number | null = null,
-): Promise<Forecast | null> {
-  try {
-    return estimateForecast(
-      await getSky(),
-      "year",
-      yearSolarKwh,
-      todaySolarKwh,
-      todayConsumedKwh,
-      refDailySolar,
-      bypassDailyAvg,
-      monthConsumedKwh,
-      yearConsumedKwh,
-      elecRatePhpPerKwh,
-    );
+    const sky = await fetchSky();
+    return estimateForecast(sky, {
+      period: inputs.period,
+      periodSolarKwh: inputs.periodSolarKwh,
+      todaySolarKwh: inputs.todaySolarKwh,
+      todayConsumedKwh: inputs.todayConsumedKwh,
+      refDailySolarKwh: inputs.refDailySolarKwh,
+      bypassDailyAvgKwh: inputs.bypassDailyAvgKwh ?? 0,
+      monthConsumedKwh: inputs.monthConsumedKwh ?? NaN,
+      yearConsumedKwh: inputs.yearConsumedKwh ?? NaN,
+      elecRatePhpPerKwh: inputs.elecRatePhpPerKwh ?? null,
+    });
   } catch {
     return null;
   }

@@ -1,21 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  fetchDayForecast,
-  fetchMonthForecast,
-  fetchYearForecast,
+  fetchForecast,
+  type Forecast,
+  type ForecastPeriod,
 } from "../lib/forecast";
 import { isNA, kwhParts, php, sunH } from "../lib/format";
 import LoadingSpinner from "./LoadingSpinner";
 
-function Tiles({
-  yieldKwh,
-  billPhp,
-  sunHours,
-}: {
-  yieldKwh: number;
-  billPhp: number;
-  sunHours: number;
-}) {
+function Tiles({ yieldKwh, billPhp, sunHours }: Forecast) {
   const y = kwhParts(yieldKwh);
   const yieldMissing = isNA(yieldKwh);
   const billMissing = isNA(billPhp);
@@ -83,6 +75,97 @@ function LoadingTiles() {
   );
 }
 
+interface ForecastCardProps {
+  period: Period;
+  day: PeriodResponse | null;
+  month: PeriodResponse | null;
+  year: PeriodResponse | null;
+  fetching?: boolean;
+  elecRate?: number | null;
+}
+
+function dayOfYear(date: Date): number {
+  return (
+    Math.floor(
+      (date.getTime() - new Date(date.getFullYear(), 0, 1).getTime()) /
+        86400000,
+    ) + 1
+  );
+}
+
+function useForecastInputs(
+  period: ForecastPeriod,
+  day: PeriodResponse | null,
+  month: PeriodResponse | null,
+  year: PeriodResponse | null,
+) {
+  return useMemo(() => {
+    const todaySolarKwh = day?.energy.generated_kwh ?? NaN;
+    const todayConsumedKwh = day?.energy.consumed_kwh ?? NaN;
+    const monthSolarKwh = month?.energy.generated_kwh ?? NaN;
+    const monthConsumedKwh = month?.energy.consumed_kwh ?? NaN;
+    const yearSolarKwh = year?.energy.generated_kwh ?? NaN;
+    const yearConsumedKwh = year?.energy.consumed_kwh ?? NaN;
+    const monthBypassKwh = month?.energy.bypass_kwh ?? NaN;
+
+    const now = new Date();
+    const elapsedDaysInMonth = now.getDate();
+    const dayOfYearNow = dayOfYear(now);
+
+    const bypassDailyAvgKwh =
+      Number.isFinite(monthBypassKwh) && elapsedDaysInMonth > 0
+        ? Math.max(0, monthBypassKwh / elapsedDaysInMonth)
+        : 0;
+
+    const monthRef =
+      elapsedDaysInMonth > 1 &&
+      Number.isFinite(monthSolarKwh) &&
+      Number.isFinite(todaySolarKwh)
+        ? (monthSolarKwh - todaySolarKwh) / (elapsedDaysInMonth - 1)
+        : todaySolarKwh;
+    const yearRef =
+      dayOfYearNow > 1 &&
+      Number.isFinite(yearSolarKwh) &&
+      Number.isFinite(todaySolarKwh)
+        ? (yearSolarKwh - todaySolarKwh) / (dayOfYearNow - 1)
+        : todaySolarKwh;
+
+    const refDailySolarKwh =
+      period === "year"
+        ? Number.isFinite(yearRef) && yearRef >= 0
+          ? yearRef
+          : todaySolarKwh
+        : Number.isFinite(monthRef) && monthRef >= 0
+          ? monthRef
+          : todaySolarKwh;
+
+    const periodSolarKwh =
+      period === "day"
+        ? todaySolarKwh
+        : period === "month"
+          ? monthSolarKwh
+          : yearSolarKwh;
+
+    const missing =
+      period === "day"
+        ? isNA(todaySolarKwh) || isNA(todayConsumedKwh)
+        : period === "month"
+          ? isNA(monthSolarKwh) || isNA(todaySolarKwh) || isNA(todayConsumedKwh)
+          : isNA(yearSolarKwh) || isNA(todaySolarKwh) || isNA(todayConsumedKwh);
+
+    return {
+      periodSolarKwh,
+      todaySolarKwh,
+      todayConsumedKwh,
+      refDailySolarKwh,
+      bypassDailyAvgKwh,
+      monthConsumedKwh,
+      yearConsumedKwh,
+      missing,
+    };
+  }, [period, day, month, year]);
+}
+
 export default function ForecastCard({
   period,
   day,
@@ -90,80 +173,21 @@ export default function ForecastCard({
   year,
   fetching = false,
   elecRate = null,
-}: {
-  period: Period;
-  day: PeriodResponse | null;
-  month: PeriodResponse | null;
-  year: PeriodResponse | null;
-  fetching?: boolean;
-  elecRate?: number | null;
-}) {
-  const [result, setResult] = useState<{
-    yieldKwh: number;
-    billPhp: number;
-    sunHours: number;
-  } | null>(null);
-
+}: ForecastCardProps) {
+  const [result, setResult] = useState<Forecast | null>(null);
   const [failed, setFailed] = useState(false);
   const [fetchingMeteo, setFetchingMeteo] = useState(false);
 
-  const todaySolarKwh = day?.energy.generated_kwh ?? NaN;
-  const todayConsumedKwh = day?.energy.consumed_kwh ?? NaN;
-  const monthSolarKwh = month?.energy.generated_kwh ?? NaN;
-  const monthConsumedKwh = month?.energy.consumed_kwh ?? NaN;
-  const yearSolarKwh = year?.energy.generated_kwh ?? NaN;
-  const yearConsumedKwh = year?.energy.consumed_kwh ?? NaN;
-  const monthBypassKwh = month?.energy.bypass_kwh ?? NaN;
-
-  const now = new Date();
-  const elapsed = now.getDate();
-
-  const bypassDailyAvg =
-    Number.isFinite(monthBypassKwh) && elapsed > 0
-      ? Math.max(0, monthBypassKwh / elapsed)
-      : 0;
-  const dayOfYear =
-    Math.floor(
-      (now.getTime() - new Date(now.getFullYear(), 0, 1).getTime()) / 86400000,
-    ) + 1;
-
-  const monthRef =
-    elapsed > 1 &&
-    Number.isFinite(monthSolarKwh) &&
-    Number.isFinite(todaySolarKwh)
-      ? (monthSolarKwh - todaySolarKwh) / (elapsed - 1)
-      : todaySolarKwh;
-  const yearRef =
-    dayOfYear > 1 &&
-    Number.isFinite(yearSolarKwh) &&
-    Number.isFinite(todaySolarKwh)
-      ? (yearSolarKwh - todaySolarKwh) / (dayOfYear - 1)
-      : todaySolarKwh;
-  const refDailySolar =
-    period === "year"
-      ? Number.isFinite(yearRef) && yearRef >= 0
-        ? yearRef
-        : todaySolarKwh
-      : Number.isFinite(monthRef) && monthRef >= 0
-        ? monthRef
-        : todaySolarKwh;
-
-  const missing =
-    period === "day"
-      ? isNA(todaySolarKwh) || isNA(todayConsumedKwh)
-      : period === "month"
-        ? isNA(monthSolarKwh) || isNA(todaySolarKwh) || isNA(todayConsumedKwh)
-        : isNA(yearSolarKwh) || isNA(todaySolarKwh) || isNA(todayConsumedKwh);
+  const inputs = useForecastInputs(period, day, month, year);
 
   const inputsLoading =
     fetching ||
     day == null ||
-    (period === "day" && month == null) ||
-    (period === "month" && month == null) ||
+    (period !== "year" && month == null) ||
     (period === "year" && year == null);
 
   useEffect(() => {
-    if (inputsLoading || missing) {
+    if (inputsLoading || inputs.missing) {
       setResult(null);
       setFailed(false);
       setFetchingMeteo(false);
@@ -171,74 +195,38 @@ export default function ForecastCard({
     }
     let live = true;
     setFailed(false);
-    // Clear stale period result immediately so tab switches show loading, not old data.
     setResult(null);
     setFetchingMeteo(true);
-    const run = async () => {
-      try {
-        if (period === "day") {
-          const f = await fetchDayForecast(
-            todaySolarKwh,
-            todayConsumedKwh,
-            refDailySolar,
-            bypassDailyAvg,
-            monthConsumedKwh,
-            yearConsumedKwh,
-            elecRate,
-          );
-          if (live) setResult(f);
-        } else if (period === "month") {
-          const f = await fetchMonthForecast(
-            monthSolarKwh,
-            todaySolarKwh,
-            todayConsumedKwh,
-            refDailySolar,
-            bypassDailyAvg,
-            monthConsumedKwh,
-            yearConsumedKwh,
-            elecRate,
-          );
-          if (live) setResult(f);
-        } else {
-          const f = await fetchYearForecast(
-            yearSolarKwh,
-            todaySolarKwh,
-            todayConsumedKwh,
-            refDailySolar,
-            bypassDailyAvg,
-            monthConsumedKwh,
-            yearConsumedKwh,
-            elecRate,
-          );
-          if (live) setResult(f);
-        }
-      } catch {
+
+    fetchForecast({
+      period,
+      periodSolarKwh: inputs.periodSolarKwh,
+      todaySolarKwh: inputs.todaySolarKwh,
+      todayConsumedKwh: inputs.todayConsumedKwh,
+      refDailySolarKwh: inputs.refDailySolarKwh,
+      bypassDailyAvgKwh: inputs.bypassDailyAvgKwh,
+      monthConsumedKwh: inputs.monthConsumedKwh,
+      yearConsumedKwh: inputs.yearConsumedKwh,
+      elecRatePhpPerKwh: elecRate,
+    })
+      .then((f) => {
+        if (live) setResult(f);
+      })
+      .catch(() => {
         if (live) setFailed(true);
-      } finally {
+      })
+      .finally(() => {
         if (live) setFetchingMeteo(false);
-      }
-    };
-    void run();
+      });
+
     return () => {
       live = false;
     };
-  }, [
-    period,
-    monthSolarKwh,
-    monthConsumedKwh,
-    todaySolarKwh,
-    todayConsumedKwh,
-    yearSolarKwh,
-    yearConsumedKwh,
-    refDailySolar,
-    bypassDailyAvg,
-    missing,
-    inputsLoading,
-    elecRate,
-  ]);
+  }, [period, inputs, inputsLoading, elecRate]);
 
   const showLoading =
-    inputsLoading || fetchingMeteo || (!missing && !result && !failed);
+    inputsLoading || fetchingMeteo || (!inputs.missing && !result && !failed);
+
   if (showLoading) {
     return (
       <section className="card p-5" aria-label="Forecast" aria-busy="true">
@@ -253,7 +241,7 @@ export default function ForecastCard({
     );
   }
 
-  if (missing || failed || !result) {
+  if (inputs.missing || failed || !result) {
     return (
       <section className="card p-5" aria-label="Forecast">
         <div className="eyebrow mb-1">Forecast</div>
