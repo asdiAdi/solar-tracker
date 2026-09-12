@@ -183,7 +183,6 @@ export default function ForecastCard({
   const inputsLoading =
     fetching ||
     day == null ||
-    (period !== "year" && month == null) ||
     (period === "year" && year == null);
 
   useEffect(() => {
@@ -224,8 +223,7 @@ export default function ForecastCard({
     };
   }, [period, inputs, inputsLoading, elecRate]);
 
-  const showLoading =
-    inputsLoading || fetchingMeteo || (!inputs.missing && !result && !failed);
+  const showLoading = inputsLoading || fetchingMeteo;
 
   if (showLoading) {
     return (
