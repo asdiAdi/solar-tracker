@@ -109,7 +109,9 @@ export default function ForecastCard({
   const todaySolarKwh = day?.energy.generated_kwh ?? NaN;
   const todayConsumedKwh = day?.energy.consumed_kwh ?? NaN;
   const monthSolarKwh = month?.energy.generated_kwh ?? NaN;
+  const monthConsumedKwh = month?.energy.consumed_kwh ?? NaN;
   const yearSolarKwh = year?.energy.generated_kwh ?? NaN;
+  const yearConsumedKwh = year?.energy.consumed_kwh ?? NaN;
   const monthBypassKwh = month?.energy.bypass_kwh ?? NaN;
 
   const now = new Date();
@@ -155,6 +157,7 @@ export default function ForecastCard({
   const inputsLoading =
     fetching ||
     day == null ||
+    (period === "day" && month == null) ||
     (period === "month" && month == null) ||
     (period === "year" && year == null);
 
@@ -178,6 +181,8 @@ export default function ForecastCard({
             todayConsumedKwh,
             refDailySolar,
             bypassDailyAvg,
+            monthConsumedKwh,
+            yearConsumedKwh,
           );
           if (live) setResult(f);
         } else if (period === "month") {
@@ -187,6 +192,8 @@ export default function ForecastCard({
             todayConsumedKwh,
             refDailySolar,
             bypassDailyAvg,
+            monthConsumedKwh,
+            yearConsumedKwh,
           );
           if (live) setResult(f);
         } else {
@@ -196,6 +203,8 @@ export default function ForecastCard({
             todayConsumedKwh,
             refDailySolar,
             bypassDailyAvg,
+            monthConsumedKwh,
+            yearConsumedKwh,
           );
           if (live) setResult(f);
         }
@@ -212,9 +221,11 @@ export default function ForecastCard({
   }, [
     period,
     monthSolarKwh,
+    monthConsumedKwh,
     todaySolarKwh,
     todayConsumedKwh,
     yearSolarKwh,
+    yearConsumedKwh,
     refDailySolar,
     bypassDailyAvg,
     missing,
