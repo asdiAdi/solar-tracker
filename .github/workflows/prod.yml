@@ -1,4 +1,4 @@
-name: Deploy to AWS and Sync to S3 + CloudFront
+name: Deploy Prod to AWS and Sync to S3 + CloudFront
 
 on:
   push:
@@ -6,12 +6,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-main
+  group: deploy-prod
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: prod
     permissions:
       contents: read
       id-token: write
@@ -39,6 +40,7 @@ jobs:
       - name: Build everything
         run: npm run build
         env:
+          STAGE: prod
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
           VITE_LAT: ${{ secrets.VITE_LAT }}
           VITE_LON: ${{ secrets.VITE_LON }}
@@ -52,8 +54,9 @@ jobs:
           BYPASS_PASSWORD: ${{ secrets.BYPASS_PASSWORD }}
 
       - name: Deploy backend stack
-        run: npm run deploy
+        run: npm run deploy:prod
         env:
+          STAGE: prod
           CDK_DEFAULT_ACCOUNT: ${{ secrets.CDK_DEFAULT_ACCOUNT }}
           CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
           SOLARMAN_TOKEN: ${{ secrets.SOLARMAN_TOKEN }}

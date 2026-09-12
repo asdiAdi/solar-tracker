@@ -15,6 +15,7 @@ scratch/
 dist-ssr
 *.local
 .env
+!.env.example
 *.tsbuildinfo
 
 # Editor directories and files

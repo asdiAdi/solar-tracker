@@ -11,7 +11,13 @@
     "preview": "vite preview",
     "bundle": "esbuild infra/lambda/solar-data.ts --bundle --platform=node --target=node24 --format=cjs --outfile=infra/dist-lambda/index.js --external:aws-sdk",
     "synth": "npm run bundle && cdk synth -o dist-infra",
+    "synth:dev": "STAGE=dev npm run synth",
+    "synth:prod": "STAGE=prod npm run synth",
     "deploy": "npm run bundle && cdk deploy --all --require-approval never",
+    "deploy:dev": "STAGE=dev npm run bundle && cdk deploy --all --require-approval never",
+    "deploy:prod": "STAGE=prod npm run bundle && cdk deploy --all --require-approval never",
+    "build:dev": "tsc -b && vite build --mode dev && npm run synth:dev",
+    "build:prod": "tsc -b && vite build --mode prod && npm run synth:prod",
     "test:live": "node infra/test/fetch-live.mjs"
   },
   "dependencies": {

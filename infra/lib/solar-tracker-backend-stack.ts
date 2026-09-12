@@ -5,52 +5,75 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 
+interface SolarTrackerBackendStackProps extends cdk.StackProps {
+  stage: string;
+}
+
 export class SolarTrackerBackendStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(
+    scope: Construct,
+    id: string,
+    props: SolarTrackerBackendStackProps,
+  ) {
     super(scope, id, props);
+    const isProd = props.stage === "prod";
+    const stageSuffix = isProd ? "Prod" : "Dev";
+    const allowedOrigin = process.env.ALLOWED_ORIGIN?.trim();
 
     // saved data
     const table = new dynamodb.TableV2(this, "SolarTrackerDb", {
-      tableName: "SolarTrackerDb",
+      tableName: `SolarTrackerDb-${props.stage}`,
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       timeToLiveAttribute: "expiresAt",
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      deletionProtection: true,
+      removalPolicy: isProd
+        ? cdk.RemovalPolicy.RETAIN
+        : cdk.RemovalPolicy.DESTROY,
+      deletionProtection: isProd,
     });
 
     // work
     const fn = new lambda.Function(this, "SolarDataFn", {
+      functionName: `SolarDataFn-${props.stage}`,
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "index.handler",
       code: lambda.Code.fromAsset("infra/dist-lambda"),
       memorySize: 256,
       timeout: cdk.Duration.seconds(20),
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      logRetention: isProd
+        ? logs.RetentionDays.ONE_WEEK
+        : logs.RetentionDays.THREE_DAYS,
       environment: {
         SOLARMAN_BASE_URL:
           process.env.SOLARMAN_BASE_URL ?? "https://globalapi.solarmanpv.com",
         SOLARMAN_TOKEN: process.env.SOLARMAN_TOKEN ?? "",
         DEVICE_SN: process.env.DEVICE_SN ?? "",
         TABLE_NAME: table.tableName,
-        ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN ?? "",
+        ALLOWED_ORIGIN: isProd ? (allowedOrigin ?? "*") : "*",
         BYPASS_PASSWORD: process.env.BYPASS_PASSWORD ?? "",
       },
     });
     table.grantReadWriteData(fn);
 
     // access
-    // TODO: add custom domain name
     const api = new apigw.RestApi(this, "SolarTrackerApi", {
-      restApiName: "solar-tracker-backend",
+      restApiName: `SolarTrackerApi-${props.stage}`,
+      deployOptions: {
+        stageName: props.stage,
+      },
       defaultCorsPreflightOptions: {
-        allowOrigins: [(process.env.ALLOWED_ORIGIN ?? "").trim()],
+        allowOrigins: isProd
+          ? allowedOrigin
+            ? [allowedOrigin]
+            : apigw.Cors.ALL_ORIGINS
+          : apigw.Cors.ALL_ORIGINS,
         allowMethods: ["GET", "POST"],
         allowHeaders: ["Content-Type", "X-Api-Key"],
       },
     });
 
-    const key = api.addApiKey("SolarTrackerApiKey");
+    const key = api.addApiKey(`SolarTrackerApiKey-${props.stage}`);
     const plan = api.addUsagePlan("SolarTrackerUsagePlan", {
+      name: `SolarTrackerUsagePlan-${props.stage}`,
       throttle: { rateLimit: 10, burstLimit: 20 },
     });
     plan.addApiStage({ stage: api.deploymentStage });
@@ -74,7 +97,9 @@ export class SolarTrackerBackendStack extends cdk.Stack {
         apiKeyRequired: true,
       });
 
-    new cdk.CfnOutput(this, "ApiUrl", { value: api.url });
-    new cdk.CfnOutput(this, "TableName", { value: table.tableName });
+    new cdk.CfnOutput(this, `ApiUrl${stageSuffix}`, { value: api.url });
+    new cdk.CfnOutput(this, `TableName${stageSuffix}`, {
+      value: table.tableName,
+    });
   }
 }
