@@ -17,7 +17,6 @@ export class SolarTrackerBackendStack extends cdk.Stack {
   ) {
     super(scope, id, props);
     const isProd = props.stage === "prod";
-    const stageSuffix = isProd ? "Prod" : "Dev";
     const allowedOrigin = process.env.ALLOWED_ORIGIN?.trim();
 
     // saved data
@@ -109,8 +108,8 @@ export class SolarTrackerBackendStack extends cdk.Stack {
         apiKeyRequired: true,
       });
 
-    new cdk.CfnOutput(this, `ApiUrl${stageSuffix}`, { value: api.url });
-    new cdk.CfnOutput(this, `TableName${stageSuffix}`, {
+    new cdk.CfnOutput(this, `ApiUrl-${props.stage}`, { value: api.url });
+    new cdk.CfnOutput(this, `TableName-${props.stage}`, {
       value: table.tableName,
     });
   }
