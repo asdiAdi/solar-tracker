@@ -31,6 +31,16 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       deletionProtection: isProd,
     });
 
+    const logGroup = new logs.LogGroup(this, "SolarDataFnLogGroup", {
+      logGroupName: `/aws/lambda/SolarDataFn-${props.stage}`,
+      retention: isProd
+        ? logs.RetentionDays.ONE_MONTH
+        : logs.RetentionDays.ONE_WEEK,
+      removalPolicy: isProd
+        ? cdk.RemovalPolicy.RETAIN
+        : cdk.RemovalPolicy.DESTROY,
+    });
+
     // work
     const fn = new lambda.Function(this, "SolarDataFn", {
       functionName: `SolarDataFn-${props.stage}`,
@@ -39,9 +49,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       code: lambda.Code.fromAsset("infra/dist-lambda"),
       memorySize: 256,
       timeout: cdk.Duration.seconds(20),
-      logRetention: isProd
-        ? logs.RetentionDays.ONE_WEEK
-        : logs.RetentionDays.THREE_DAYS,
+      logGroup: logGroup,
       environment: {
         SOLARMAN_BASE_URL:
           process.env.SOLARMAN_BASE_URL ?? "https://globalapi.solarmanpv.com",
@@ -71,11 +79,15 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       },
     });
 
-    const key = api.addApiKey(`SolarTrackerApiKey-${props.stage}`);
+    const key = api.addApiKey("SolarTrackerApiKey", {
+      apiKeyName: `SolarTrackerApiKey-${props.stage}`,
+    });
     const plan = api.addUsagePlan("SolarTrackerUsagePlan", {
       name: `SolarTrackerUsagePlan-${props.stage}`,
       throttle: { rateLimit: 10, burstLimit: 20 },
+      quota: isProd ? { limit: 100, period: apigw.Period.DAY } : undefined,
     });
+
     plan.addApiStage({ stage: api.deploymentStage });
     plan.addApiKey(key);
 
