@@ -1,4 +1,4 @@
-name: Deploy Dev to AWS and Sync to S3 + CloudFront
+name: DEV Build, Deploy and Sync to AWS
 
 on:
   push:

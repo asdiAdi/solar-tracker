@@ -1,4 +1,4 @@
-name: Deploy Prod to AWS and Sync to S3 + CloudFront
+name: PROD Build, Deploy and Sync to AWS
 
 on:
   push:

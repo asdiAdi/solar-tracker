@@ -35,6 +35,8 @@ new StaticSiteStack(app, `SolarTrackerFrontendStack-${stage}`, {
       ownerId: "80302904",
       repo: "solar-tracker",
       repoId: "1366971460",
+      branch: stage === "prod" ? "main" : stage,
+      environment: stage,
     },
     tableName: "gh_site_secrets",
   },
