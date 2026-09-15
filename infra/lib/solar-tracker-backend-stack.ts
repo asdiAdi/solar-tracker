@@ -3,12 +3,14 @@ import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
-import * as ssm from "aws-cdk-lib/aws-ssm";
 import * as iam from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
 
 interface SolarTrackerBackendStackProps extends cdk.StackProps {
   stage: string;
+  allowedOrigins: string[];
+  ssmPrefix: string;
+  ssmPolicy: iam.PolicyStatement;
 }
 
 export class SolarTrackerBackendStack extends cdk.Stack {
@@ -21,11 +23,6 @@ export class SolarTrackerBackendStack extends cdk.Stack {
   ) {
     super(scope, id, props);
     const isProd = props.stage === "prod";
-    const SSM_PREFIX = `/solar-tracker/backend/${props.stage}`;
-    const allowedOrigins = ssm.StringParameter.valueFromLookup(
-      this,
-      `${SSM_PREFIX}/ALLOWED_ORIGINS`,
-    ).split(",");
 
     // saved data
     const table = new dynamodb.TableV2(this, "SolarTrackerDb", {
@@ -60,20 +57,13 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       environment: {
         STAGE: props.stage,
         TABLE_NAME: table.tableName,
-        SSM_PREFIX: SSM_PREFIX,
+        SSM_PREFIX: props.ssmPrefix,
+        ALLOWED_ORIGINS: props.allowedOrigins.join(","),
       },
     });
     table.grantReadWriteData(fn);
 
-    fn.addToRolePolicy(
-      new iam.PolicyStatement({
-        sid: "AllowGetParameter",
-        actions: ["ssm:GetParametersByPath", "ssm:GetParameter"],
-        resources: [
-          `arn:aws:ssm:${this.region}:${this.account}:parameter${SSM_PREFIX}/*`,
-        ],
-      }),
-    );
+    fn.addToRolePolicy(props.ssmPolicy);
 
     // access
     this.api = new apigw.RestApi(this, "SolarTrackerApi", {
@@ -82,7 +72,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
         stageName: props.stage,
       },
       defaultCorsPreflightOptions: {
-        allowOrigins: allowedOrigins,
+        allowOrigins: props.allowedOrigins,
         allowMethods: ["GET", "POST"],
         allowHeaders: ["Content-Type", "X-Api-Key"],
       },

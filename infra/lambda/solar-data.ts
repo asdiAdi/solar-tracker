@@ -21,12 +21,16 @@ class HttpError extends Error {
 
 const SSM_PREFIX = process.env.SSM_PREFIX;
 const TABLE_NAME = process.env.TABLE_NAME;
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS;
 
 if (!SSM_PREFIX) {
   throw new Error("SSM_PREFIX undefined");
 }
 if (!TABLE_NAME) {
   throw new Error("TABLE_NAME undefined");
+}
+if (!ALLOWED_ORIGINS) {
+  throw new Error("ALLOWED_ORIGINS undefined");
 }
 
 const TIMEZONE = "Asia/Manila";
@@ -553,12 +557,12 @@ async function energyForYear(year: string | undefined): Promise<PeriodResult> {
 }
 
 function resolveOrigin(ev: LambdaEvent): string | undefined {
-  const allowed = getParam("ALLOWED_ORIGINS").split(",");
+  const allowed = ALLOWED_ORIGINS?.split(",");
   const headers = ev.headers ?? {};
   const requestOrigin =
     headers.origin ?? headers.Origin ?? headers.ORIGIN ?? "";
   if (!requestOrigin) return undefined;
-  return allowed.includes(requestOrigin) ? requestOrigin : undefined;
+  return allowed?.includes(requestOrigin) ? requestOrigin : undefined;
 }
 
 function jsonResponse(

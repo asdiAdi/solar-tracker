@@ -1,3 +1,4 @@
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as cdk from "aws-cdk-lib";
 import { SolarTrackerBackendStack } from "./lib/solar-tracker-backend-stack.ts";
 import { StaticSiteStack, GithubDeployStack } from "@asdi/aws-infra";
@@ -15,14 +16,23 @@ const env = {
   },
 };
 
-const backend = new SolarTrackerBackendStack(
-  app,
-  `SolarTrackerBackendStack-${stage}`,
-  {
-    ...env,
-    stage,
-  },
-);
+const SSM_FRONTEND_PREFIX = `/solar-tracker/frontend/${stage}`;
+const SSM_BACKEND_PREFIX = `/solar-tracker/backend/${stage}`;
+const SSM_GITHUB_ACTION_PREFIX = `/solar-tracker/github_action/${stage}`;
+
+const createSSMPolicy = (prefixes: string[]): iam.PolicyStatement => {
+  return new iam.PolicyStatement({
+    sid: "AllowGetParameter",
+    actions: [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath",
+    ],
+    resources: prefixes.map(
+      (p) => `arn:aws:ssm:${env.env.region}:${env.env.account}:parameter${p}/*`,
+    ),
+  });
+};
 
 const frontend = new StaticSiteStack(
   app,
@@ -33,6 +43,20 @@ const frontend = new StaticSiteStack(
     subDomain: stage === "prod" ? "solar" : `solar-${stage}`,
   },
 );
+
+const url = `https://${frontend.staticSite.domainName}`;
+const allowedOrigins = [url];
+if (stage !== "prod") {
+  allowedOrigins.push("http://localhost:5173");
+}
+
+new SolarTrackerBackendStack(app, `SolarTrackerBackendStack-${stage}`, {
+  ...env,
+  stage,
+  allowedOrigins: allowedOrigins,
+  ssmPrefix: SSM_BACKEND_PREFIX,
+  ssmPolicy: createSSMPolicy([SSM_BACKEND_PREFIX]),
+});
 
 // github actions
 const deployment = new GithubDeployStack(
@@ -50,26 +74,25 @@ const deployment = new GithubDeployStack(
       environment: stage,
     },
     managedPolicies: [frontend.staticSite.managedPolicy],
+    inlinePolicyStatements: [
+      createSSMPolicy([SSM_FRONTEND_PREFIX, SSM_GITHUB_ACTION_PREFIX]),
+    ],
   },
 );
 
-new cdk.CfnOutput(backend, `SolarTrackerApiUrl-${stage}`, {
-  value: backend.api.url,
-  description: "Frontend base api url",
-});
-new cdk.CfnOutput(frontend, `SolarTrackerRegion-${stage}`, {
-  value: frontend.region,
-  description: "github action variable: AWS_REGION",
-});
 new cdk.CfnOutput(frontend, `SolarTrackerBucket-${stage}`, {
   value: frontend.staticSite.bucket.bucketName,
-  description: "github action variable: S3_BUCKET",
+  description: "put to ssm parameter github_action: S3_BUCKET",
 });
 new cdk.CfnOutput(frontend, `SolarTrackerDistributionId-${stage}`, {
   value: frontend.staticSite.distribution.distributionId,
-  description: "github action variable: CLOUDFRONT_DISTRIBUTION_ID",
+  description: "put to ssm parameter github_action: CLOUDFRONT_DISTRIBUTION_ID",
 });
-new cdk.CfnOutput(frontend, `SolarTrackerRoleToAssume-${stage}`, {
+new cdk.CfnOutput(deployment, `SolarTrackerRoleToAssume-${stage}`, {
   value: deployment.role.roleArn,
   description: "github action variable: AWS_ROLE_TO_ASSUME",
+});
+new cdk.CfnOutput(deployment, `SolarTrackerRegion-${stage}`, {
+  value: deployment.region,
+  description: "github action variable: AWS_REGION",
 });

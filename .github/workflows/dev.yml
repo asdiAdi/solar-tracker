@@ -9,6 +9,9 @@ concurrency:
   group: deploy-dev
   cancel-in-progress: false
 
+env:
+  STAGE: dev
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -19,8 +22,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -34,38 +35,43 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Build everything
-        run: npm run build
-        env:
-          STAGE: dev
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
-          VITE_LAT: ${{ secrets.VITE_LAT }}
-          VITE_LON: ${{ secrets.VITE_LON }}
-          VITE_TIMEZONE: ${{ secrets.VITE_TIMEZONE }}
-          VITE_X_API_KEY: ${{ secrets.VITE_X_API_KEY }}
-          CDK_DEFAULT_ACCOUNT: ${{ secrets.CDK_DEFAULT_ACCOUNT }}
-          CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
-          SOLARMAN_TOKEN: ${{ secrets.SOLARMAN_TOKEN }}
-          DEVICE_SN: ${{ secrets.DEVICE_SN }}
-          ALLOWED_ORIGIN: ${{ secrets.ALLOWED_ORIGIN }}
-          BYPASS_PASSWORD: ${{ secrets.BYPASS_PASSWORD }}
+      - name: Fetch frontend param from SSM
+        run: |
+          aws ssm get-parameters-by-path \
+            --path "/solar-tracker/frontend/dev/" \
+            --with-decryption \
+            --recursive \
+            --query "Parameters[*].[Name,Value]" \
+            --output text | while IFS=$'\t' read -r name value; do
+              key=$(basename "$name")
+              echo "::add-mask::$value"
+              echo "$key=$value" >> "$GITHUB_ENV"
+            done
+
+      - name: Build frontend
+        run: npm run build:vite
+
+      - name: Fetch github_action param from SSM
+        run: |
+          aws ssm get-parameters-by-path \
+            --path "/solar-tracker/github_action/dev/" \
+            --with-decryption \
+            --recursive \
+            --query "Parameters[*].[Name,Value]" \
+            --output text | while IFS=$'\t' read -r name value; do
+              key=$(basename "$name")
+              echo "::add-mask::$value"
+              echo "$key=$value" >> "$GITHUB_ENV"
+            done
 
       - name: Deploy backend stack
         run: npm run deploy:dev
-        env:
-          STAGE: dev
-          CDK_DEFAULT_ACCOUNT: ${{ secrets.CDK_DEFAULT_ACCOUNT }}
-          CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
-          SOLARMAN_TOKEN: ${{ secrets.SOLARMAN_TOKEN }}
-          DEVICE_SN: ${{ secrets.DEVICE_SN }}
-          ALLOWED_ORIGIN: ${{ secrets.ALLOWED_ORIGIN }}
-          BYPASS_PASSWORD: ${{ secrets.BYPASS_PASSWORD }}
 
       - name: Sync static files to S3
-        run: aws s3 sync dist/ s3://${{ secrets.S3_BUCKET }} --delete
+        run: aws s3 sync dist/ s3://$S3_BUCKET --delete
 
       - name: Invalidate CloudFront Cache
-        run: aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"
+        run: aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_DISTRIBUTION_ID --paths "/*"
