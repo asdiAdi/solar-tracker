@@ -42,6 +42,7 @@ const frontend = new StaticSiteStack(
     ...env,
     secondLevelDomain: "carladi.com",
     subDomain: stage === "prod" ? "solar" : `solar-${stage}`,
+    spaFallback: true,
   },
 );
 
