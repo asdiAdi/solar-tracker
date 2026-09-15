@@ -114,10 +114,5 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       .addMethod("POST", new apigw.LambdaIntegration(fn), {
         apiKeyRequired: true,
       });
-
-    new cdk.CfnOutput(this, `ApiUrl-${props.stage}`, { value: api.url });
-    new cdk.CfnOutput(this, `TableName-${props.stage}`, {
-      value: table.tableName,
-    });
   }
 }
