@@ -12,6 +12,8 @@ interface SolarTrackerBackendStackProps extends cdk.StackProps {
 }
 
 export class SolarTrackerBackendStack extends cdk.Stack {
+  public readonly api: apigw.RestApi;
+
   constructor(
     scope: Construct,
     id: string,
@@ -57,6 +59,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       logGroup: logGroup,
       environment: {
         STAGE: props.stage,
+        TABLE_NAME: table.tableName,
         SSM_PREFIX: SSM_PREFIX,
       },
     });
@@ -73,7 +76,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
     );
 
     // access
-    const api = new apigw.RestApi(this, "SolarTrackerApi", {
+    this.api = new apigw.RestApi(this, "SolarTrackerApi", {
       restApiName: `SolarTrackerApi-${props.stage}`,
       deployOptions: {
         stageName: props.stage,
@@ -85,31 +88,31 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       },
     });
 
-    const key = api.addApiKey("SolarTrackerApiKey", {
+    const key = this.api.addApiKey("SolarTrackerApiKey", {
       apiKeyName: `SolarTrackerApiKey-${props.stage}`,
     });
-    const plan = api.addUsagePlan("SolarTrackerUsagePlan", {
+    const plan = this.api.addUsagePlan("SolarTrackerUsagePlan", {
       name: `SolarTrackerUsagePlan-${props.stage}`,
       throttle: { rateLimit: 10, burstLimit: 20 },
       quota: isProd ? { limit: 100, period: apigw.Period.DAY } : undefined,
     });
 
-    plan.addApiStage({ stage: api.deploymentStage });
+    plan.addApiStage({ stage: this.api.deploymentStage });
     plan.addApiKey(key);
 
     for (const p of ["live", "day", "month", "year"]) {
-      api.root
+      this.api.root
         .addResource(p)
         .addMethod("GET", new apigw.LambdaIntegration(fn), {
           apiKeyRequired: true,
         });
     }
-    api.root
+    this.api.root
       .addResource("bypass-update")
       .addMethod("POST", new apigw.LambdaIntegration(fn), {
         apiKeyRequired: true,
       });
-    api.root
+    this.api.root
       .addResource("rate-update")
       .addMethod("POST", new apigw.LambdaIntegration(fn), {
         apiKeyRequired: true,

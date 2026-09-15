@@ -19,6 +19,16 @@ class HttpError extends Error {
   }
 }
 
+const SSM_PREFIX = process.env.SSM_PREFIX;
+const TABLE_NAME = process.env.TABLE_NAME;
+
+if (!SSM_PREFIX) {
+  throw new Error("SSM_PREFIX undefined");
+}
+if (!TABLE_NAME) {
+  throw new Error("TABLE_NAME undefined");
+}
+
 const TIMEZONE = "Asia/Manila";
 const ELEC_RATE_PREFIX = "elec_rate:";
 const BYPASS_PREFIX = "bypass:reading:";
@@ -91,7 +101,6 @@ function getParam(key: string): string {
 // Reused across invocations within the same Lambda execution environment.
 let docClient: DynamoDBDocumentClient | null = null;
 function getDocClient(): DynamoDBDocumentClient | null {
-  if (!config["TABLE_NAME"]) return null;
   if (!docClient) {
     docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
       marshallOptions: { removeUndefinedValues: true },
@@ -105,7 +114,7 @@ async function cacheGet<T>(key: string): Promise<T | undefined> {
   if (!client) return undefined;
   try {
     const result = await client.send(
-      new GetCommand({ TableName: getParam("TABLE_NAME"), Key: { pk: key } }),
+      new GetCommand({ TableName: TABLE_NAME, Key: { pk: key } }),
     );
     const item = result.Item as CacheRecord<T> | undefined;
     if (!item || !("data" in item)) return undefined;
@@ -135,9 +144,7 @@ async function cacheSet<T>(
       updatedAt: new Date().toISOString(),
       ...(ttlSec != null ? { expiresAt: nowSec + ttlSec } : {}),
     };
-    await client.send(
-      new PutCommand({ TableName: getParam("TABLE_NAME"), Item: item }),
-    );
+    await client.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
   } catch {}
 }
 
@@ -150,7 +157,7 @@ async function scanByPrefix<T>(
   try {
     const result = await client.send(
       new ScanCommand({
-        TableName: getParam("TABLE_NAME"),
+        TableName: TABLE_NAME,
         FilterExpression: "begins_with(pk, :p)",
         ExpressionAttributeValues: { ":p": prefix },
       }),
@@ -726,11 +733,8 @@ export const handler = async (
     string,
     string | undefined
   >;
-  const ssmPrefix = process.env.SSM_PREFIX;
-  if (ssmPrefix === undefined || ssmPrefix === "") {
-    throw new HttpError(`missing ssmPrefix`, 500);
-  }
-  config = await loadParams(ssmPrefix);
+
+  config = await loadParams(SSM_PREFIX);
 
   try {
     switch (path) {

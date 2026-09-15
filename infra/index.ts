@@ -15,10 +15,14 @@ const env = {
   },
 };
 
-new SolarTrackerBackendStack(app, `SolarTrackerBackendStack-${stage}`, {
-  ...env,
-  stage,
-});
+const backend = new SolarTrackerBackendStack(
+  app,
+  `SolarTrackerBackendStack-${stage}`,
+  {
+    ...env,
+    stage,
+  },
+);
 
 const frontend = new StaticSiteStack(
   app,
@@ -49,6 +53,10 @@ const deployment = new GithubDeployStack(
   },
 );
 
+new cdk.CfnOutput(backend, `SolarTrackerApiUrl-${stage}`, {
+  value: backend.api.url,
+  description: "Frontend base api url",
+});
 new cdk.CfnOutput(frontend, `SolarTrackerRegion-${stage}`, {
   value: frontend.region,
   description: "github action variable: AWS_REGION",
