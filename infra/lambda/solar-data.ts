@@ -83,7 +83,7 @@ async function loadParams(prefix: string): Promise<StringMap> {
 function getParam(key: string): string {
   const v = config[key];
   if (v === undefined || v === "") {
-    throw new HttpError(`missing env ${key}`, 500);
+    throw new HttpError(`missing SSM ${key}`, 500);
   }
   return v;
 }

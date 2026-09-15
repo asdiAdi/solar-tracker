@@ -4,6 +4,7 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as ssm from "aws-cdk-lib/aws-ssm";
+import * as iam from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
 
 interface SolarTrackerBackendStackProps extends cdk.StackProps {
@@ -19,8 +20,6 @@ export class SolarTrackerBackendStack extends cdk.Stack {
     super(scope, id, props);
     const isProd = props.stage === "prod";
     const SSM_PREFIX = `/solar-tracker/backend/${props.stage}`;
-    // Same SSM key as runtime Lambda reads via GetParametersByPath.
-    // Requires re-synth/re-deploy after changing SSM; runtime picks it up live.
     const allowedOrigins = ssm.StringParameter.valueFromLookup(
       this,
       `${SSM_PREFIX}/ALLOWED_ORIGINS`,
@@ -62,6 +61,16 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       },
     });
     table.grantReadWriteData(fn);
+
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: "AllowGetParameter",
+        actions: ["ssm:GetParametersByPath", "ssm:GetParameter"],
+        resources: [
+          `arn:aws:ssm:${this.region}:${this.account}:parameter${SSM_PREFIX}/*`,
+        ],
+      }),
+    );
 
     // access
     const api = new apigw.RestApi(this, "SolarTrackerApi", {
