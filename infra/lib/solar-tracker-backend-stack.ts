@@ -3,6 +3,7 @@ import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as ssm from "aws-cdk-lib/aws-ssm";
 import { Construct } from "constructs";
 
 interface SolarTrackerBackendStackProps extends cdk.StackProps {
@@ -17,7 +18,13 @@ export class SolarTrackerBackendStack extends cdk.Stack {
   ) {
     super(scope, id, props);
     const isProd = props.stage === "prod";
-    const allowedOrigin = process.env.ALLOWED_ORIGIN?.trim();
+    const SSM_PREFIX = `/solar-tracker/backend/${props.stage}`;
+    // Same SSM key as runtime Lambda reads via GetParametersByPath.
+    // Requires re-synth/re-deploy after changing SSM; runtime picks it up live.
+    const allowedOrigins = ssm.StringParameter.valueFromLookup(
+      this,
+      `${SSM_PREFIX}/ALLOWED_ORIGINS`,
+    ).split(",");
 
     // saved data
     const table = new dynamodb.TableV2(this, "SolarTrackerDb", {
@@ -50,13 +57,8 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(20),
       logGroup: logGroup,
       environment: {
-        SOLARMAN_BASE_URL:
-          process.env.SOLARMAN_BASE_URL ?? "https://globalapi.solarmanpv.com",
-        SOLARMAN_TOKEN: process.env.SOLARMAN_TOKEN ?? "",
-        DEVICE_SN: process.env.DEVICE_SN ?? "",
-        TABLE_NAME: table.tableName,
-        ALLOWED_ORIGIN: isProd ? (allowedOrigin ?? "*") : "*",
-        BYPASS_PASSWORD: process.env.BYPASS_PASSWORD ?? "",
+        STAGE: props.stage,
+        SSM_PREFIX: SSM_PREFIX,
       },
     });
     table.grantReadWriteData(fn);
@@ -68,11 +70,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
         stageName: props.stage,
       },
       defaultCorsPreflightOptions: {
-        allowOrigins: isProd
-          ? allowedOrigin
-            ? [allowedOrigin]
-            : apigw.Cors.ALL_ORIGINS
-          : apigw.Cors.ALL_ORIGINS,
+        allowOrigins: allowedOrigins,
         allowMethods: ["GET", "POST"],
         allowHeaders: ["Content-Type", "X-Api-Key"],
       },

@@ -1,11 +1,14 @@
 import type { APIGatewayProxyResult } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { GetParametersByPathCommand, SSMClient } from "@aws-sdk/client-ssm";
 import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
   ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
+
+type StringMap = Record<string, string>;
 
 class HttpError extends Error {
   constructor(
@@ -16,26 +19,15 @@ class HttpError extends Error {
   }
 }
 
-const SOLARMAN_BASE_URL = (
-  process.env.SOLARMAN_BASE_URL ?? "https://globalapi.solarmanpv.com"
-).replace(/\/$/, "");
-
-const SOLARMAN_TOKEN = () => process.env.SOLARMAN_TOKEN ?? "";
-const DEVICE_SN = () => process.env.DEVICE_SN ?? "";
-const TABLE_NAME = () => process.env.TABLE_NAME ?? "";
-const BYPASS_PASSWORD = () => process.env.BYPASS_PASSWORD ?? "";
-const ALLOWED_ORIGIN = () => (process.env.ALLOWED_ORIGIN ?? "").trim();
-
 const TIMEZONE = "Asia/Manila";
 const ELEC_RATE_PREFIX = "elec_rate:";
 const BYPASS_PREFIX = "bypass:reading:";
 const BYPASS_UPDATE_FAILED = "bypass-update failed";
 const RATE_UPDATE_FAILED = "rate-update failed";
-
-export const LIVE_TTL_SEC = 5 * 60;
-export const DAY_TTL_SEC = 5 * 60;
-export const MONTH_TTL_SEC = 60 * 60;
-export const YEAR_TTL_SEC = 24 * 60 * 60;
+const LIVE_TTL_SEC = 5 * 60;
+const DAY_TTL_SEC = 5 * 60;
+const MONTH_TTL_SEC = 60 * 60;
+const YEAR_TTL_SEC = 24 * 60 * 60;
 const PAST_TTL_SEC = 365 * 24 * 60 * 60;
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -46,21 +38,60 @@ const toNumber = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-function toKeyValueMap(
-  dataList: SolarmanDataPoint[] = [],
-): Record<string, string> {
-  const map: Record<string, string> = {};
+function toKeyValueMap(dataList: SolarmanDataPoint[] = []): StringMap {
+  const map: StringMap = {};
   for (const point of dataList) {
     if (point?.key) map[point.key] = point.value;
   }
   return map;
 }
 
+let ssmClient: SSMClient | null = null;
+let ssmCache: StringMap | null = null;
+let config: StringMap = {};
+function getSSmClient(): SSMClient {
+  if (!ssmClient) {
+    ssmClient = new SSMClient();
+  }
+  return ssmClient;
+}
+
+async function loadParams(prefix: string): Promise<StringMap> {
+  if (ssmCache) return ssmCache;
+  const client = getSSmClient();
+  const params: StringMap = {};
+  let nextToken: string | undefined;
+  do {
+    const res = await client.send(
+      new GetParametersByPathCommand({
+        Path: prefix,
+        Recursive: true,
+        WithDecryption: true,
+        NextToken: nextToken,
+      }),
+    );
+    for (const p of res.Parameters ?? []) {
+      const shortKey = p.Name?.split("/").pop();
+      if (shortKey && p.Value !== undefined) params[shortKey] = p.Value;
+    }
+    nextToken = res.NextToken;
+  } while (nextToken);
+  ssmCache = params;
+  return params;
+}
+
+function getParam(key: string): string {
+  const v = config[key];
+  if (v === undefined || v === "") {
+    throw new HttpError(`missing env ${key}`, 500);
+  }
+  return v;
+}
+
 // Reused across invocations within the same Lambda execution environment.
 let docClient: DynamoDBDocumentClient | null = null;
-
 function getDocClient(): DynamoDBDocumentClient | null {
-  if (!TABLE_NAME()) return null;
+  if (!config["TABLE_NAME"]) return null;
   if (!docClient) {
     docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
       marshallOptions: { removeUndefinedValues: true },
@@ -72,10 +103,9 @@ function getDocClient(): DynamoDBDocumentClient | null {
 async function cacheGet<T>(key: string): Promise<T | undefined> {
   const client = getDocClient();
   if (!client) return undefined;
-
   try {
     const result = await client.send(
-      new GetCommand({ TableName: TABLE_NAME(), Key: { pk: key } }),
+      new GetCommand({ TableName: getParam("TABLE_NAME"), Key: { pk: key } }),
     );
     const item = result.Item as CacheRecord<T> | undefined;
     if (!item || !("data" in item)) return undefined;
@@ -97,7 +127,6 @@ async function cacheSet<T>(
 ): Promise<void> {
   const client = getDocClient();
   if (!client) return;
-
   try {
     const nowSec = Math.floor(Date.now() / 1000);
     const item: CacheRecord<T> = {
@@ -106,7 +135,9 @@ async function cacheSet<T>(
       updatedAt: new Date().toISOString(),
       ...(ttlSec != null ? { expiresAt: nowSec + ttlSec } : {}),
     };
-    await client.send(new PutCommand({ TableName: TABLE_NAME(), Item: item }));
+    await client.send(
+      new PutCommand({ TableName: getParam("TABLE_NAME"), Item: item }),
+    );
   } catch {}
 }
 
@@ -116,11 +147,10 @@ async function scanByPrefix<T>(
 ): Promise<T[]> {
   const client = getDocClient();
   if (!client) return [];
-
   try {
     const result = await client.send(
       new ScanCommand({
-        TableName: TABLE_NAME(),
+        TableName: getParam("TABLE_NAME"),
         FilterExpression: "begins_with(pk, :p)",
         ExpressionAttributeValues: { ":p": prefix },
       }),
@@ -138,15 +168,14 @@ async function scanByPrefix<T>(
 }
 
 async function solarmanPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${SOLARMAN_BASE_URL}${path}`, {
+  const res = await fetch(`https://globalapi.solarmanpv.com/${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${SOLARMAN_TOKEN()}`,
+      Authorization: `Bearer ${getParam("SOLARMAN_TOKEN")}`,
     },
     body: JSON.stringify(body),
   });
-
   if (res.status === 401 || res.status === 403) {
     throw new HttpError("solarman-unauthorized", 502);
   }
@@ -174,7 +203,7 @@ async function fetchLiveFresh(): Promise<SolarmanLiveResponse> {
   const body = await solarmanPost<SolarmanLiveResponse>(
     "/device/v1.0/currentData",
     {
-      deviceSn: DEVICE_SN(),
+      deviceSn: getParam("DEVICE_SN"),
     },
   );
   await cacheSet("live", body, LIVE_TTL_SEC);
@@ -186,7 +215,7 @@ async function getLive(): Promise<SolarmanLiveResponse> {
   return cached ?? fetchLiveFresh();
 }
 
-export function mapLive(body: SolarmanLiveResponse): LiveMetrics {
+function mapLive(body: SolarmanLiveResponse): LiveMetrics {
   const m = toKeyValueMap(body?.dataList);
   return {
     solar_w: Math.round(
@@ -199,9 +228,8 @@ export function mapLive(body: SolarmanLiveResponse): LiveMetrics {
   };
 }
 
-export function sumHistorical(raw: SolarmanHistoricalResponse): EnergyTotals {
+function sumHistorical(raw: SolarmanHistoricalResponse): EnergyTotals {
   const lists = (raw?.paramDataList ?? []).map((p) => p?.dataList ?? []);
-
   const totals = {
     generated_kwh: 0,
     consumed_kwh: 0,
@@ -239,7 +267,6 @@ async function loadPeriod(
   if (cached?.raw) {
     return { energy: sumHistorical(cached.raw), ts: cached.ts ?? ts, ttlSec };
   }
-
   const raw = await fetchRaw();
   await cacheSet(key, { raw, ts }, ttlSec);
   return { energy: sumHistorical(raw), ts, ttlSec };
@@ -249,13 +276,10 @@ async function loadElecRates(): Promise<ElecRate[]> {
   const rates = await scanByPrefix<ElecRate>(ELEC_RATE_PREFIX, (pk, data) => {
     const mm = pk.slice(ELEC_RATE_PREFIX.length);
     if (!/^\d{4}-\d{2}$/.test(mm)) return undefined;
-
     const month = Number(mm.slice(5, 7));
     if (month < 1 || month > 12) return undefined;
-
     const rate = Number((data as { rate?: unknown } | undefined)?.rate);
     if (!Number.isFinite(rate) || rate <= 0) return undefined;
-
     return { mm, rate };
   });
 
@@ -284,7 +308,6 @@ function costFor(
 ): CostBreakdown {
   const rate_php_per_kwh =
     Number.isFinite(Number(rate)) && Number(rate) > 0 ? Number(rate) : null;
-
   if (rate_php_per_kwh == null) {
     return {
       consumed_php: NaN,
@@ -337,7 +360,6 @@ function dayInfo(date: string | undefined) {
   const dt = new Date(Date.UTC(y, m - 1, d));
   const iso = `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
   const isCurrent = iso === todayIso();
-
   return {
     key: `day:${iso}`,
     ts: `${iso}T00:00:00+08:00`,
@@ -352,7 +374,6 @@ function monthInfo(month: string | undefined) {
   const [y, m] = base.split("-").map(Number);
   const mm = `${y}-${pad2(m)}`;
   const isCurrent = mm === currentMonth();
-
   return {
     key: `month:${mm}`,
     ts: `${mm}-01T00:00:00+08:00`,
@@ -373,16 +394,13 @@ async function loadBypassReadings(): Promise<BypassReading[]> {
     (pk, data) => {
       const iso = pk.slice(BYPASS_PREFIX.length);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return undefined;
-
       const cum = Number(
         (data as { cumulative_kwh?: unknown } | undefined)?.cumulative_kwh,
       );
       if (!Number.isFinite(cum) || cum < 0) return undefined;
-
       return { iso, day: isoToDay(iso), cum };
     },
   );
-
   return readings.sort((a, b) =>
     a.day === b.day ? a.cum - b.cum : a.day - b.day,
   );
@@ -426,14 +444,11 @@ function findBracket(
 function bypassDailyRate(readings: BypassReading[], iso: string): number {
   const fallback = bypassGlobalAvg(readings);
   if (readings.length < 2) return 0;
-
   const targetDay = isoToDay(iso);
   const latest = readings[readings.length - 1];
-
   if (iso.slice(0, 7) === latest.iso.slice(0, 7)) {
     return bypassSegmentRate(readings[readings.length - 2], latest, fallback);
   }
-
   const { lower, upper } = findBracket(
     readings,
     (r) => r.day < targetDay,
@@ -445,12 +460,10 @@ function bypassDailyRate(readings: BypassReading[], iso: string): number {
 function bypassMonthRate(readings: BypassReading[], mm: string): number {
   const fallback = bypassGlobalAvg(readings);
   if (readings.length < 2) return 0;
-
   const latest = readings[readings.length - 1];
   if (mm === latest.iso.slice(0, 7)) {
     return bypassSegmentRate(readings[readings.length - 2], latest, fallback);
   }
-
   const { lower, upper } = findBracket(
     readings,
     (r) => r.iso.slice(0, 7) < mm,
@@ -462,7 +475,6 @@ function bypassMonthRate(readings: BypassReading[], mm: string): number {
 function bypassYearRate(readings: BypassReading[], yyyy: string): number {
   const fallback = bypassGlobalAvg(readings);
   if (readings.length < 2) return 0;
-
   const { lower, upper } = findBracket(
     readings,
     (r) => r.iso.slice(0, 4) < yyyy,
@@ -495,7 +507,7 @@ function bypassYearMultiplier(yyyy: string): number {
 async function energyForDay(date: string | undefined): Promise<PeriodResult> {
   const info = dayInfo(date);
   const result = await loadPeriod(info.key, info.ts, info.ttlSec, () =>
-    fetchHistoricalRaw(DEVICE_SN(), 2, info.iso, info.iso),
+    fetchHistoricalRaw(getParam("DEVICE_SN"), 2, info.iso, info.iso),
   );
   const readings = await loadBypassReadings();
   result.energy.bypass_kwh = round1(bypassDailyRate(readings, info.iso));
@@ -507,7 +519,7 @@ async function energyForMonth(
 ): Promise<PeriodResult> {
   const info = monthInfo(month);
   const result = await loadPeriod(info.key, info.ts, info.ttlSec, () =>
-    fetchHistoricalRaw(DEVICE_SN(), 3, info.mm, info.mm),
+    fetchHistoricalRaw(getParam("DEVICE_SN"), 3, info.mm, info.mm),
   );
   const readings = await loadBypassReadings();
   result.energy.bypass_kwh = round1(
@@ -520,12 +532,11 @@ async function energyForYear(year: string | undefined): Promise<PeriodResult> {
   const y = Number(year ?? currentYear());
   const ts = `${y}-01-01T00:00:00+08:00`;
   const isCurrent = y === currentYear();
-
   const result = await loadPeriod(
     `year:${y}`,
     ts,
     isCurrent ? YEAR_TTL_SEC : null,
-    () => fetchHistoricalRaw(DEVICE_SN(), 4, String(y), String(y)),
+    () => fetchHistoricalRaw(getParam("DEVICE_SN"), 4, String(y), String(y)),
   );
   const readings = await loadBypassReadings();
   result.energy.bypass_kwh = round1(
@@ -534,28 +545,34 @@ async function energyForYear(year: string | undefined): Promise<PeriodResult> {
   return result;
 }
 
-function corsOrigin(ev: LambdaEvent): string {
-  const allowed = ALLOWED_ORIGIN();
-  if (!allowed) return "*";
-
+function resolveOrigin(ev: LambdaEvent): string | undefined {
+  const allowed = getParam("ALLOWED_ORIGINS").split(",");
   const headers = ev.headers ?? {};
   const requestOrigin =
     headers.origin ?? headers.Origin ?? headers.ORIGIN ?? "";
-  return requestOrigin === allowed ? requestOrigin : allowed;
+  if (!requestOrigin) return undefined;
+  return allowed.includes(requestOrigin) ? requestOrigin : undefined;
 }
 
 function jsonResponse(
-  origin: string,
   statusCode: number,
   body: unknown,
+  ev?: LambdaEvent,
   maxAgeSec?: number,
 ): APIGatewayProxyResult {
+  let origin: string | undefined;
+  try {
+    origin = ev ? resolveOrigin(ev) : undefined;
+  } catch {
+    origin = undefined;
+  }
   return {
     statusCode,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": origin,
-      Vary: "Origin",
+      ...(origin !== undefined
+        ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" }
+        : {}),
       ...(maxAgeSec != null
         ? { "Cache-Control": `public, max-age=${maxAgeSec}` }
         : {}),
@@ -579,33 +596,31 @@ function parseJsonBody(ev: LambdaEvent): Record<string, unknown> {
 }
 
 function requireValidPassword(password: string): void {
-  const expected = BYPASS_PASSWORD();
-  if (!expected || password !== expected) {
+  if (password !== getParam("BYPASS_PASSWORD")) {
     throw new Error("invalid password");
   }
 }
 
-async function handleLive(origin: string): Promise<APIGatewayProxyResult> {
+async function handleLive(ev: LambdaEvent): Promise<APIGatewayProxyResult> {
   const live = mapLive(await getLive());
   const t = manilaToday();
   const rates = await loadElecRates();
-
   return jsonResponse(
-    origin,
     200,
     {
       timestamp: `${t.y}-${pad2(t.m)}-${pad2(t.d)}T00:00:00+08:00`,
       live,
       elec_rate: latestElecRate(rates),
     },
+    ev,
     LIVE_TTL_SEC,
   );
 }
 
 async function handleEnergyPeriod(
-  origin: string,
   period: "day" | "month" | "year",
   query: Record<string, string | undefined>,
+  ev: LambdaEvent,
 ): Promise<APIGatewayProxyResult> {
   const result =
     period === "day"
@@ -621,7 +636,6 @@ async function handleEnergyPeriod(
       : rateForMonth(rates, result.ts.slice(0, 7));
 
   return jsonResponse(
-    origin,
     200,
     {
       timestamp: result.ts,
@@ -629,12 +643,12 @@ async function handleEnergyPeriod(
       cost: costFor(result.energy, rate),
       elec_rate: rate,
     },
+    ev,
     result.ttlSec ?? PAST_TTL_SEC,
   );
 }
 
 async function handleBypassUpdate(
-  origin: string,
   ev: LambdaEvent,
 ): Promise<APIGatewayProxyResult> {
   try {
@@ -654,18 +668,22 @@ async function handleBypassUpdate(
       null,
     );
 
-    return jsonResponse(origin, 200, {
-      ok: true,
-      recordedAt,
-      cumulative_kwh: cumulativeKwh,
-    });
-  } catch {
-    return jsonResponse(origin, 400, { error: BYPASS_UPDATE_FAILED });
+    return jsonResponse(
+      200,
+      {
+        ok: true,
+        recordedAt,
+        cumulative_kwh: cumulativeKwh,
+      },
+      ev,
+    );
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    return jsonResponse(400, { error: BYPASS_UPDATE_FAILED }, ev);
   }
 }
 
 async function handleRateUpdate(
-  origin: string,
   ev: LambdaEvent,
 ): Promise<APIGatewayProxyResult> {
   try {
@@ -693,40 +711,45 @@ async function handleRateUpdate(
       null,
     );
 
-    return jsonResponse(origin, 200, { ok: true, month: mm, rate });
-  } catch {
-    return jsonResponse(origin, 400, { error: RATE_UPDATE_FAILED });
+    return jsonResponse(200, { ok: true, month: mm, rate }, ev);
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    return jsonResponse(400, { error: RATE_UPDATE_FAILED }, ev);
   }
 }
 
 export const handler = async (
   ev: LambdaEvent,
 ): Promise<APIGatewayProxyResult> => {
-  const origin = corsOrigin(ev);
   const path = getRoutePath(ev);
   const query = (ev.queryStringParameters ?? {}) as Record<
     string,
     string | undefined
   >;
+  const ssmPrefix = process.env.SSM_PREFIX;
+  if (ssmPrefix === undefined || ssmPrefix === "") {
+    throw new HttpError(`missing ssmPrefix`, 500);
+  }
+  config = await loadParams(ssmPrefix);
 
   try {
     switch (path) {
       case "live":
-        return await handleLive(origin);
+        return await handleLive(ev);
       case "day":
       case "month":
       case "year":
-        return await handleEnergyPeriod(origin, path, query);
+        return await handleEnergyPeriod(path, query, ev);
       case "bypass-update":
-        return await handleBypassUpdate(origin, ev);
+        return await handleBypassUpdate(ev);
       case "rate-update":
-        return await handleRateUpdate(origin, ev);
+        return await handleRateUpdate(ev);
       default:
-        return jsonResponse(origin, 404, { error: "unknown route" });
+        return jsonResponse(404, { error: "unknown route" }, ev);
     }
   } catch (e) {
     const status = e instanceof HttpError ? e.status : 500;
     const message = e instanceof Error ? e.message : "internal";
-    return jsonResponse(origin, status, { error: message });
+    return jsonResponse(status, { error: message }, ev);
   }
 };
