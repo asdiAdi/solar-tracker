@@ -18,7 +18,7 @@ const env = {
 
 const SSM_FRONTEND_PREFIX = `/solar-tracker/frontend/${stage}`;
 const SSM_BACKEND_PREFIX = `/solar-tracker/backend/${stage}`;
-const SSM_GITHUB_ACTION_PREFIX = `/solar-tracker/github_action/${stage}`;
+const SSM_GITHUB_ACTION_PREFIX = `/solar-tracker/github-action/${stage}`;
 
 const createSSMPolicy = (prefixes: string[]): iam.PolicyStatement => {
   return new iam.PolicyStatement({
@@ -82,11 +82,11 @@ const deployment = new GithubDeployStack(
 
 new cdk.CfnOutput(frontend, `SolarTrackerBucket-${stage}`, {
   value: frontend.staticSite.bucket.bucketName,
-  description: "put to ssm parameter github_action: S3_BUCKET",
+  description: "put to ssm parameter github-action: S3_BUCKET",
 });
 new cdk.CfnOutput(frontend, `SolarTrackerDistributionId-${stage}`, {
   value: frontend.staticSite.distribution.distributionId,
-  description: "put to ssm parameter github_action: CLOUDFRONT_DISTRIBUTION_ID",
+  description: "put to ssm parameter github-action: CLOUDFRONT_DISTRIBUTION_ID",
 });
 new cdk.CfnOutput(deployment, `SolarTrackerRoleToAssume-${stage}`, {
   value: deployment.role.roleArn,
