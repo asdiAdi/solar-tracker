@@ -28,9 +28,10 @@ const createSSMPolicy = (prefixes: string[]): iam.PolicyStatement => {
       "ssm:GetParameters",
       "ssm:GetParametersByPath",
     ],
-    resources: prefixes.map(
-      (p) => `arn:aws:ssm:${env.env.region}:${env.env.account}:parameter${p}/*`,
-    ),
+    resources: prefixes.flatMap((p) => [
+      `arn:aws:ssm:${env.env.region}:${env.env.account}:parameter${p}`,
+      `arn:aws:ssm:${env.env.region}:${env.env.account}:parameter${p}/*`,
+    ]),
   });
 };
 
