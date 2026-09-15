@@ -202,7 +202,7 @@ function fetchHistoricalRaw(
   startTime: string,
   endTime: string,
 ): Promise<SolarmanHistoricalResponse> {
-  return solarmanPost<SolarmanHistoricalResponse>("/device/v1.0/historical", {
+  return solarmanPost<SolarmanHistoricalResponse>("device/v1.0/historical", {
     deviceSn,
     timeType,
     startTime,
@@ -212,7 +212,7 @@ function fetchHistoricalRaw(
 
 async function fetchLiveFresh(): Promise<SolarmanLiveResponse> {
   const body = await solarmanPost<SolarmanLiveResponse>(
-    "/device/v1.0/currentData",
+    "device/v1.0/currentData",
     {
       deviceSn: getParam("DEVICE_SN"),
     },
