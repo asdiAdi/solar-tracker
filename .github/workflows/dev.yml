@@ -54,10 +54,10 @@ jobs:
       - name: Build frontend
         run: npm run build:vite
 
-      - name: Fetch github_action param from SSM
+      - name: Fetch github-action param from SSM
         run: |
           aws ssm get-parameters-by-path \
-            --path "/solar-tracker/github_action/dev/" \
+            --path "/solar-tracker/github-action/dev/" \
             --with-decryption \
             --recursive \
             --query "Parameters[*].[Name,Value]" \
