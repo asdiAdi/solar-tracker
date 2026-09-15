@@ -12,9 +12,9 @@ export default defineConfig({
       includeAssets: ["favicon.svg", "icons/*.svg"],
       manifest: {
         name: "JATH Solar Tracker",
-        short_name: "Solar Tracker",
+        short_name: "JATH Solar",
         description:
-          "Solar Tracker: battery, consumption, generated, grid + costs.",
+          "JATH Solar Tracker: battery, consumption, generated, grid + costs.",
         theme_color: "#1e1e2e",
         background_color: "#eff1f5",
         display: "standalone",

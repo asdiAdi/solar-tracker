@@ -27,7 +27,7 @@ export default function ThemeSwitcher() {
 
   return (
     <div
-      className="seg grid grid-cols-4 gap-1 p-1 w-full"
+      className="seg grid grid-cols-4 gap-1 p-1 w-full min-w-0"
       role="group"
       aria-label="Theme"
     >
@@ -36,7 +36,8 @@ export default function ThemeSwitcher() {
           key={t.id}
           onClick={() => setTheme(t.id)}
           aria-pressed={theme === t.id}
-          className="px-2 py-2 rounded-lg text-sm font-semibold w-full transition-colors"
+          title={t.label}
+          className="px-1 sm:px-2 py-2 rounded-lg text-xs sm:text-sm font-semibold w-full min-w-0 truncate whitespace-nowrap transition-colors"
           style={{
             background: theme === t.id ? "var(--text)" : "transparent",
             color: theme === t.id ? "var(--bg)" : "var(--muted)",

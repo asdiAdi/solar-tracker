@@ -13,14 +13,14 @@ function Tiles({ yieldKwh, billPhp, sunHours }: Forecast) {
   const billMissing = isNA(billPhp);
   const sunMissing = isNA(sunHours);
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+    <div className="grid grid-cols-3 gap-2 sm:gap-3 mt-3">
       <div
-        className="rounded-xl p-4 text-center"
+        className="rounded-xl p-3 sm:p-4 text-center min-w-0"
         style={{ background: "var(--chip)" }}
       >
-        <div className="text-sm font-semibold muted">Projected Yield</div>
+        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">Est. Yield</div>
         <div
-          className="med-number mt-1"
+          className="med-number med-number--compact mt-1"
           style={yieldMissing ? { color: "var(--bad)" } : undefined}
         >
           {y.value}
@@ -28,24 +28,24 @@ function Tiles({ yieldKwh, billPhp, sunHours }: Forecast) {
         </div>
       </div>
       <div
-        className="rounded-xl p-4 text-center"
+        className="rounded-xl p-3 sm:p-4 text-center min-w-0"
         style={{ background: "var(--chip)" }}
       >
-        <div className="text-sm font-semibold muted">Projected Bill</div>
+        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">Est. Bill</div>
         <div
-          className="med-number mt-1"
+          className="med-number med-number--compact mt-1"
           style={billMissing ? { color: "var(--bad)" } : undefined}
         >
           {php(billPhp)}
         </div>
       </div>
       <div
-        className="rounded-xl p-4 text-center"
+        className="rounded-xl p-3 sm:p-4 text-center min-w-0"
         style={{ background: "var(--chip)" }}
       >
-        <div className="text-sm font-semibold muted">Sun average</div>
+        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">Sun avg</div>
         <div
-          className="med-number mt-1"
+          className="med-number med-number--compact mt-1"
           style={sunMissing ? { color: "var(--bad)" } : undefined}
         >
           {sunH(sunHours)}
@@ -58,15 +58,15 @@ function Tiles({ yieldKwh, billPhp, sunHours }: Forecast) {
 
 function LoadingTiles() {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-      {["Projected Yield", "Projected Bill", "Sun average"].map((t) => (
+    <div className="grid grid-cols-3 gap-2 sm:gap-3 mt-3">
+      {["Est. Yield", "Est. Bill", "Sun avg"].map((t) => (
         <div
           key={t}
-          className="rounded-xl p-4 text-center"
+          className="rounded-xl p-3 sm:p-4 text-center min-w-0"
           style={{ background: "var(--chip)" }}
         >
-          <div className="text-sm font-semibold muted">{t}</div>
-          <div className="med-number mt-1" style={{ color: "var(--muted)" }}>
+          <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">{t}</div>
+          <div className="med-number med-number--compact mt-1" style={{ color: "var(--muted)" }}>
             <LoadingSpinner />
           </div>
         </div>

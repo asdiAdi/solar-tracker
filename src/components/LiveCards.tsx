@@ -14,7 +14,7 @@ function Power({
   if (loading) {
     return (
       <span
-        className="big-number"
+        className="big-number big-number--compact"
         style={{ color: "var(--muted)" }}
         aria-busy="true"
       >
@@ -26,7 +26,7 @@ function Power({
   const missing = isNA(v);
   return (
     <span
-      className="big-number"
+      className="big-number big-number--compact"
       style={{ color: missing ? "var(--bad)" : tone }}
     >
       {p.value}
@@ -51,12 +51,12 @@ function EqualCard({
 }) {
   return (
     <div
-      className="card px-5 py-4 flex flex-col items-center gap-1 min-h-[132px] justify-center text-center"
+      className="card px-1.5 py-2 sm:px-5 sm:py-4 flex flex-col items-center gap-0.5 sm:gap-1 min-h-0 sm:min-h-[132px] justify-center text-center min-w-0"
       aria-busy={loading || undefined}
     >
-      <div className="eyebrow">{title}</div>
+      <div className="eyebrow eyebrow--compact max-w-full truncate">{title}</div>
       <Power v={value} tone={tone} loading={loading} />
-      <div className="text-sm muted font-medium">{caption}</div>
+      <div className="text-[0.65rem] sm:text-sm muted font-medium truncate max-w-full leading-tight">{caption}</div>
     </div>
   );
 }
@@ -159,7 +159,7 @@ export default function LiveCards({
               )}
             </span>
             <span
-              className="text-sm muted font-medium"
+              className="text-xs sm:text-sm muted font-medium"
               style={
                 loading
                   ? undefined
@@ -178,7 +178,7 @@ export default function LiveCards({
             </span>
           </div>
           {estimate != null && (
-            <span className="text-sm muted font-medium ml-auto text-right">
+            <span className="text-xs sm:text-sm muted font-medium ml-auto text-right">
               {estimate}
             </span>
           )}
@@ -206,7 +206,7 @@ export default function LiveCards({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-2 sm:gap-4">
         <EqualCard
           title="Solar"
           value={live.solar_w}

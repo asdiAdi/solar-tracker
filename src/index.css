@@ -228,6 +228,26 @@ body {
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
+/* Compact variants for always-multicolumn grids on phones */
+@media (max-width: 639px) {
+  .big-number--compact {
+    font-size: clamp(1.35rem, 5.4vw, 1.65rem);
+    white-space: nowrap;
+  }
+  .med-number--compact {
+    font-size: clamp(1.25rem, 5vw, 1.5rem);
+    white-space: nowrap;
+  }
+  .big-number--compact .unit,
+  .med-number--compact .unit {
+    font-size: 0.42em;
+    margin-left: 0.15em;
+  }
+  .eyebrow--compact {
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+  }
+}
 .formula {
   font-size: 0.8rem;
   font-weight: 500;

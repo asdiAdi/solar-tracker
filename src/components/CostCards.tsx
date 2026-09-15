@@ -28,14 +28,14 @@ export default function CostCards({
   return (
     <section
       aria-label={`${label} cost breakdown`}
-      className="card p-5 w-full"
+      className="card p-4 sm:p-5 w-full"
       aria-busy={loading || undefined}
     >
-      <div className="eyebrow mb-4">Total Cost</div>
-      <div className="flex flex-col gap-3 w-full">
+      <div className="eyebrow mb-3 sm:mb-4">Total Cost</div>
+      <div className="flex flex-col gap-2.5 sm:gap-3 w-full">
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
-            <div className="text-base font-semibold">Hybrid Power Used</div>
+            <div className="text-sm sm:text-base font-semibold">Hybrid Power Used</div>
             <div className="formula">
               {loading ? (
                 <LoadingSpinner label="Cost loading" />
@@ -45,7 +45,7 @@ export default function CostCards({
             </div>
           </div>
           <div
-            className="text-xl font-bold"
+            className="text-base sm:text-xl font-bold text-right whitespace-nowrap"
             style={{
               fontVariantNumeric: "tabular-nums",
               color: loading ? "var(--muted)" : "var(--accent)",
@@ -56,7 +56,7 @@ export default function CostCards({
         </div>
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
-            <div className="text-base font-semibold">Bypassed Power Used</div>
+            <div className="text-sm sm:text-base font-semibold">Bypassed Power Used</div>
             <div className="formula">
               {loading ? (
                 <LoadingSpinner label="Cost loading" />
@@ -66,7 +66,7 @@ export default function CostCards({
             </div>
           </div>
           <div
-            className="text-xl font-bold"
+            className="text-base sm:text-xl font-bold text-right whitespace-nowrap"
             style={{
               fontVariantNumeric: "tabular-nums",
               color: loading ? "var(--muted)" : "var(--bad)",
@@ -77,7 +77,7 @@ export default function CostCards({
         </div>
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
-            <div className="text-base font-semibold">Solar Power Savings</div>
+            <div className="text-sm sm:text-base font-semibold">Solar Power Savings</div>
             <div className="formula">
               {loading ? (
                 <LoadingSpinner label="Cost loading" />
@@ -87,7 +87,7 @@ export default function CostCards({
             </div>
           </div>
           <div
-            className="text-xl font-bold"
+            className="text-base sm:text-xl font-bold text-right whitespace-nowrap"
             style={{
               color: loading
                 ? "var(--muted)"
@@ -107,13 +107,13 @@ export default function CostCards({
           </div>
         </div>
         <div
-          className="border-t pt-3 mt-1"
+          className="border-t pt-2.5 sm:pt-3 mt-1"
           style={{ borderColor: "var(--border)" }}
         >
           <div className="flex items-center justify-between gap-3 w-full">
-            <div className="text-lg font-bold">{netLabel}</div>
+            <div className="text-base sm:text-lg font-bold">{netLabel}</div>
             <div
-              className="text-3xl font-extrabold"
+              className="text-xl sm:text-3xl font-extrabold text-right whitespace-nowrap"
               style={{
                 fontVariantNumeric: "tabular-nums",
                 color: loading

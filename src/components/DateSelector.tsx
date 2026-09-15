@@ -33,7 +33,7 @@ export default function DateSelector({
   const [open, setOpen] = useState(false);
 
   const btn =
-    "px-3 py-2 rounded-lg text-base font-semibold shrink-0 transition-colors";
+    "px-2 sm:px-3 py-2 rounded-lg text-sm sm:text-base font-semibold shrink-0 transition-colors";
   const ghost = { color: "var(--muted)" } as const;
 
   const label =
@@ -162,7 +162,7 @@ function CalendarTrigger({
       type="button"
       aria-label={ariaLabel}
       onClick={onOpen}
-      className="min-w-0 flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-base font-semibold bg-transparent outline-none cursor-pointer"
+      className="min-w-0 flex-1 flex items-center justify-center gap-2 px-2 sm:px-3 py-2 rounded-lg text-sm sm:text-base font-semibold bg-transparent outline-none cursor-pointer"
       style={{ color: "var(--text)" }}
     >
       <span className="truncate">{label}</span>

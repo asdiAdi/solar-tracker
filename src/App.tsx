@@ -209,14 +209,14 @@ function MainApp() {
       className="min-h-screen"
       style={{ background: "var(--bg)", color: "var(--text)" }}
     >
-      <div className="max-w-2xl mx-auto px-4 pb-12 flex flex-col gap-4">
+      <div className="max-w-2xl mx-auto px-3 sm:px-4 pb-12 flex flex-col gap-4">
         <header className="pt-5 flex flex-col gap-3">
           <div className="flex items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2.5">
-              <span className="text-2xl" aria-hidden>
+            <div className="flex items-center gap-2.5 flex-1 min-w-0">
+              <span className="text-2xl shrink-0" aria-hidden>
                 ☀️
               </span>
-              <h1 className="text-xl font-bold tracking-tight leading-none">
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight leading-none truncate">
                 {CONFIG.APP_NAME}
               </h1>
             </div>
@@ -225,14 +225,21 @@ function MainApp() {
               onClick={onRefresh}
               disabled={refreshing}
               aria-label="Refresh data"
-              className="px-3 py-1.5 rounded-lg font-semibold"
+              title="Refresh data"
+              className="w-11 h-11 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg font-semibold shrink-0 inline-flex items-center justify-center gap-1.5 text-lg sm:text-base"
               style={{
                 background: "var(--chip)",
                 color: "var(--text)",
                 opacity: refreshing ? 0.6 : 1,
               }}
             >
-              {refreshing ? "Refreshing…" : "Refresh"}
+              <span aria-hidden>⟳</span>
+              <span className="hidden sm:inline text-base">
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </span>
+              <span className="visually-hidden">
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </span>
             </button>
           </div>
           <ThemeSwitcher />
