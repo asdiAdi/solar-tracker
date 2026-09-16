@@ -260,8 +260,6 @@ async function fetchBillingPeriod(
   start: string,
   end: string,
 ): Promise<SolarmanHistoricalResponse> {
-  if (end < start) return { paramDataList: [] }; // unreachable but you never know
-
   // single call because it's <= 30, this is only used in fetching a single day
   if (inclusiveDayCount(start, end) <= 30) {
     return fetchHistoricalRaw(deviceSn, 2, start, end);
@@ -417,38 +415,27 @@ function billingCurrentMonth(): string {
   return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}`;
 }
 
-function normalizeMm(mm: string | undefined, fallback: string): string {
-  if (mm && /^\d{4}-\d{2}$/.test(mm)) {
-    const m = Number(mm.slice(5, 7));
-    if (m >= 1 && m <= 12) return mm;
-  }
-  return fallback;
-}
-
 // count number of day from start to end inclusive e.g: 09-01 to 09-16 is 16 days
 function inclusiveDayCount(start: string, end: string): number {
   return isoToDay(end) - isoToDay(start) + 1;
 }
 
-function monthInfo(month: string | undefined) {
-  const mm = normalizeMm(month, billingCurrentMonth());
+function monthInfo(mm: string) {
   const { start, end } = billingWindowForMonth(mm);
   const today = todayIso();
-  const isFuture = start > today;
-  const isCurrent = !isFuture && end >= today;
-  const cappedEnd = isFuture ? end : end < today ? end : today;
+  const isCurrent = end >= today;
+  const cappedEnd = end < today ? end : today;
   const ts = `${cappedEnd}T00:00:00+08:00`;
   return {
     key: `month:${mm}`,
     ts,
     isCurrent,
-    isFuture,
     ttlSec: isCurrent ? MONTH_TTL_SEC : null,
     mm,
     start,
     end,
     cappedEnd,
-    elapsedDays: isFuture ? 0 : inclusiveDayCount(start, cappedEnd),
+    elapsedDays: inclusiveDayCount(start, cappedEnd),
   };
 }
 
@@ -527,17 +514,8 @@ async function energyForDay(date: string): Promise<PeriodResult> {
   };
 }
 
-async function energyForMonth(
-  month: string | undefined,
-): Promise<PeriodResult> {
+async function energyForMonth(month: string): Promise<PeriodResult> {
   const info = monthInfo(month);
-  if (info.isFuture) {
-    return {
-      energy: { ...ZERO_SOLAR, bypass_kwh: 0 },
-      ts: info.ts,
-      ttlSec: info.ttlSec,
-    };
-  }
   const { solar, ts, ttlSec } = await loadSolarRange(
     info.key,
     info.ts,
@@ -586,7 +564,6 @@ async function energyForYear(year: string | undefined): Promise<PeriodResult> {
   let bypass_kwh = 0;
   for (const mm of billingMonthsForYear(y)) {
     const info = monthInfo(mm);
-    if (info.isFuture) continue;
     const r = await loadSolarRange(
       info.key,
       info.ts,
@@ -701,7 +678,7 @@ async function handleEnergyPeriod(
     period === "day"
       ? await energyForDay(query.date ?? todayIso())
       : period === "month"
-        ? await energyForMonth(query.month)
+        ? await energyForMonth(query.month ?? billingCurrentMonth())
         : await energyForYear(query.year);
 
   const rate =

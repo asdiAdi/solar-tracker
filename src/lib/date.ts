@@ -109,10 +109,9 @@ export function billingMonthLength(ym: string): number {
   return inclusiveDayCount(start, end);
 }
 
-/** Elapsed billing days capped at today (0 if future window). */
+/** Elapsed billing days capped at today. */
 export function billingElapsedDays(ym: string, today: string = todayISO()): number {
   const { start, end } = billingWindowForMonth(ym);
-  if (start > today) return 0;
   const cappedEnd = end < today ? end : today;
   return inclusiveDayCount(start, cappedEnd);
 }
@@ -127,18 +126,4 @@ export function shiftMonth(ym: string, delta: number): string {
   const { y, m } = parseMonth(ym);
   const dt = new Date(y, m - 1 + delta, 1);
   return toMonthISO(dt.getFullYear(), dt.getMonth() + 1);
-}
-
-export function clampDayMaxToday(iso: string): string {
-  const t = todayISO();
-  return iso > t ? t : iso;
-}
-
-export function clampMonthMaxCurrent(ym: string): string {
-  const c = billingCurrentMonthISO();
-  return ym > c ? c : ym;
-}
-
-export function clampYearMaxCurrent(y: string | number): string {
-  return String(Math.min(Number(y), currentYear()));
 }

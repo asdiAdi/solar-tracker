@@ -146,7 +146,6 @@ function DayGrid({
     const dt = new Date(viewY, viewM - 1 + d, 1);
     const ny = dt.getFullYear();
     const nm = dt.getMonth() + 1;
-    if (toMonthISO(ny, nm) > curYm) return;
     setViewY(ny);
     setViewM(nm);
   };

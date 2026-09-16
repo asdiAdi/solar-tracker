@@ -2,9 +2,6 @@ import { useState } from "react";
 import CalendarModal from "./CalendarModal";
 import {
   billingCurrentMonthISO,
-  clampDayMaxToday,
-  clampMonthMaxCurrent,
-  clampYearMaxCurrent,
   currentYear,
   formatBillingLabel,
   formatFullDay,
@@ -68,7 +65,7 @@ export default function DateSelector({
             <button
               className={btn}
               style={{ ...ghost, opacity: atDayMax ? 0.3 : 1 }}
-              onClick={() => onDay(clampDayMaxToday(shiftDay(day, 1)))}
+              onClick={() => onDay(shiftDay(day, 1))}
               disabled={atDayMax}
               aria-label="Next day"
             >
@@ -94,9 +91,7 @@ export default function DateSelector({
             <button
               className={btn}
               style={{ ...ghost, opacity: atMonthMax ? 0.3 : 1 }}
-              onClick={() =>
-                onMonth(clampMonthMaxCurrent(shiftMonth(month, 1)))
-              }
+              onClick={() => onMonth(shiftMonth(month, 1))}
               disabled={atMonthMax}
               aria-label="Next month"
             >
@@ -122,7 +117,7 @@ export default function DateSelector({
             <button
               className={btn}
               style={{ ...ghost, opacity: atYearMax ? 0.3 : 1 }}
-              onClick={() => onYear(clampYearMaxCurrent(Number(year) + 1))}
+              onClick={() => onYear(String(Number(year) + 1))}
               disabled={atYearMax}
               aria-label="Next year"
             >
