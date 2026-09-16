@@ -22,6 +22,13 @@ export default function CostCards({
       return `${v.toFixed(1)} kWh`;
     return `${v.toFixed(1)} kWh × ₱${rate.toFixed(2)}/kWh`;
   };
+  const bypassFormula = () => {
+    if (loading) return null;
+    if (isNA(energy.bypass_kwh) || isNA(energy.grid_import_kwh)) return "N/A";
+    if (typeof rate !== "number" || !Number.isFinite(rate))
+      return `${energy.bypass_kwh.toFixed(1)} kWh`;
+    return `${energy.bypass_kwh.toFixed(1)} − ${energy.grid_import_kwh.toFixed(1)} kWh × ₱${rate.toFixed(2)}/kWh`;
+  };
   const solarMissing = !loading && isNA(cost.solar_php);
   const netMissing = !loading && isNA(cost.net_php);
 
@@ -35,7 +42,9 @@ export default function CostCards({
       <div className="flex flex-col gap-2.5 sm:gap-3 w-full">
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
-            <div className="text-sm sm:text-base font-semibold">Hybrid Power Used</div>
+            <div className="text-sm sm:text-base font-semibold">
+              Hybrid Power Used
+            </div>
             <div className="formula">
               {loading ? (
                 <LoadingSpinner label="Cost loading" />
@@ -56,12 +65,14 @@ export default function CostCards({
         </div>
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
-            <div className="text-sm sm:text-base font-semibold">Bypassed Power Used</div>
+            <div className="text-sm sm:text-base font-semibold">
+              Bypassed Power Used
+            </div>
             <div className="formula">
               {loading ? (
                 <LoadingSpinner label="Cost loading" />
               ) : (
-                formula(energy.bypass_kwh)
+                bypassFormula()
               )}
             </div>
           </div>
@@ -77,7 +88,9 @@ export default function CostCards({
         </div>
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
-            <div className="text-sm sm:text-base font-semibold">Solar Power Savings</div>
+            <div className="text-sm sm:text-base font-semibold">
+              Solar Power Savings
+            </div>
             <div className="formula">
               {loading ? (
                 <LoadingSpinner label="Cost loading" />

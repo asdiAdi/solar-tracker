@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CONFIG } from "./config";
 import { getLive, getPeriod } from "./lib/api";
-import { currentMonthISO, currentYear, todayISO } from "./lib/date";
+import { billingCurrentMonthISO, currentYear, formatBillingLabel, todayISO } from "./lib/date";
 import ThemeSwitcher, { getInitialTheme } from "./components/ThemeSwitcher";
 import PeriodTabs from "./components/PeriodTabs";
 import DateSelector from "./components/DateSelector";
@@ -47,14 +47,13 @@ const keyFor = (kind: Period, value: string) => `${kind}:${value}`;
 
 const currentKeys = () => ({
   day: keyFor("day", todayISO()),
-  month: keyFor("month", currentMonthISO()),
+  month: keyFor("month", billingCurrentMonthISO()),
   year: keyFor("year", String(currentYear())),
 });
 
 const PERIOD_LABEL: Record<Period, (selected: string) => string> = {
   day: (selected) => (selected === todayISO() ? "Today" : selected),
-  month: (selected) =>
-    selected === currentMonthISO() ? "This month" : selected,
+  month: (selected) => formatBillingLabel(selected),
   year: () => String(currentYear()),
 };
 
@@ -73,7 +72,7 @@ export default function App() {
 function MainApp() {
   const [period, setPeriod] = useState<Period>("day");
   const [day, setDay] = useState(todayISO());
-  const [month, setMonth] = useState(currentMonthISO());
+  const [month, setMonth] = useState(billingCurrentMonthISO());
   const [year, setYear] = useState(String(currentYear()));
   const [data, setData] = useState<Record<string, PeriodResponse>>({});
   const [live, setLive] = useState<LiveResponse | null>(null);

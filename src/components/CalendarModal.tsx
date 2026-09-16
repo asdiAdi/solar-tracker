@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   MONTH_NAMES,
+  billingCurrentMonthISO,
   currentMonthISO,
   currentYear,
   parseDay,
@@ -228,7 +229,7 @@ function MonthGrid({
   const init = parseMonth(selected);
   const [viewY, setViewY] = useState(init.y);
   const cy = currentYear();
-  const curYm = currentMonthISO();
+  const curYm = billingCurrentMonthISO();
 
   return (
     <div className="flex flex-col gap-2">

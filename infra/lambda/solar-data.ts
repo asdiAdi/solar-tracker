@@ -187,100 +187,82 @@ async function solarmanPost<T>(path: string, body: unknown): Promise<T> {
     },
     body: JSON.stringify(body),
   });
-  if (res.status === 401 || res.status === 403) {
-    throw new HttpError("solarman-unauthorized", 502);
-  }
+
   if (!res.ok) {
-    throw new HttpError(`solarman ${res.status}`, 502);
+    throw new Error(JSON.stringify(res.body));
   }
   return res.json() as Promise<T>;
 }
 
-function fetchHistoricalRaw(
-  deviceSn: string,
-  timeType: number,
-  startTime: string,
-  endTime: string,
-): Promise<SolarmanHistoricalResponse> {
-  return solarmanPost<SolarmanHistoricalResponse>("device/v1.0/historical", {
-    deviceSn,
-    timeType,
-    startTime,
-    endTime,
-  });
+// ---------------------------------------------------------------------------
+// Solar totals (SolarMAN only). Bypass is NOT here on purpose: it comes from
+// the manual meter and is combined with import exactly once in costFor.
+// ---------------------------------------------------------------------------
+interface SolarTotals {
+  generated_kwh: number;
+  consumed_kwh: number;
+  grid_import_kwh: number;
+  grid_export_kwh: number;
 }
 
-async function fetchLiveFresh(): Promise<SolarmanLiveResponse> {
-  const body = await solarmanPost<SolarmanLiveResponse>(
-    "device/v1.0/currentData",
-    {
-      deviceSn: getParam("DEVICE_SN"),
-    },
-  );
-  await cacheSet("live", body, LIVE_TTL_SEC);
-  return body;
-}
+const ZERO_SOLAR: SolarTotals = {
+  generated_kwh: 0,
+  consumed_kwh: 0,
+  grid_import_kwh: 0,
+  grid_export_kwh: 0,
+};
 
-async function getLive(): Promise<SolarmanLiveResponse> {
-  const cached = await cacheGet<SolarmanLiveResponse>("live");
-  return cached ?? fetchLiveFresh();
-}
-
-function mapLive(body: SolarmanLiveResponse): LiveMetrics {
-  const m = toKeyValueMap(body?.dataList);
-  return {
-    solar_w: Math.round(
-      toNumber(m.DP1) + toNumber(m.DP2) + toNumber(m.DP3) + toNumber(m.DP4),
-    ),
-    home_w: Math.round(toNumber(m.E_Puse_t1 ?? m.C_P_L1)),
-    grid_w: Math.round(toNumber(m.T_A_P_O_G ?? m.UAP1)),
-    battery_w: Math.round(-toNumber(m.B_P1)),
-    battery_soc_pct: Math.round(toNumber(m.B_left_cap1)),
-  };
-}
-
-function sumHistorical(raw: SolarmanHistoricalResponse): EnergyTotals {
-  const lists = (raw?.paramDataList ?? []).map((p) => p?.dataList ?? []);
-  const totals = {
-    generated_kwh: 0,
-    consumed_kwh: 0,
-    grid_import_kwh: 0,
-    grid_export_kwh: 0,
-  };
-
-  for (const dataList of lists) {
-    const m = toKeyValueMap(dataList);
-    totals.generated_kwh += toNumber(m.generation);
-    totals.consumed_kwh += toNumber(m.consumption);
-    totals.grid_import_kwh += toNumber(m.purchase);
-    totals.grid_export_kwh += toNumber(m.grid);
+function sumSolar(raw: SolarmanHistoricalResponse): SolarTotals {
+  let generated = 0;
+  let consumed = 0;
+  let gridImport = 0;
+  let gridExport = 0;
+  for (const entry of raw?.paramDataList ?? []) {
+    const m = toKeyValueMap(entry?.dataList ?? []);
+    generated += toNumber(m.generation);
+    consumed += toNumber(m.consumption);
+    gridImport += toNumber(m.purchase);
+    gridExport += toNumber(m.grid);
   }
-
   return {
-    generated_kwh: round1(totals.generated_kwh),
-    consumed_kwh: round1(totals.consumed_kwh),
-    grid_import_kwh: round1(totals.grid_import_kwh),
-    grid_export_kwh: round1(totals.grid_export_kwh),
-    bypass_kwh: 0,
+    generated_kwh: round1(generated),
+    consumed_kwh: round1(consumed),
+    grid_import_kwh: round1(gridImport),
+    grid_export_kwh: round1(gridExport),
   };
 }
 
-async function loadPeriod(
-  key: string,
-  ts: string,
-  ttlSec: number | null,
-  fetchRaw: () => Promise<SolarmanHistoricalResponse>,
-): Promise<PeriodResult> {
+function addSolar(a: SolarTotals, b: SolarTotals): SolarTotals {
+  return {
+    generated_kwh: round1(a.generated_kwh + b.generated_kwh),
+    consumed_kwh: round1(a.consumed_kwh + b.consumed_kwh),
+    grid_import_kwh: round1(a.grid_import_kwh + b.grid_import_kwh),
+    grid_export_kwh: round1(a.grid_export_kwh + b.grid_export_kwh),
+  };
+}
+
+async function loadSolarRange(
+  key: string, // key e.g: day:2023-02-02
+  ts: string, // timestamp
+  ttlSec: number | null, //timeToLive, only on current date/month/year
+  start: string,
+  end: string,
+): Promise<{ solar: SolarTotals; ts: string; ttlSec: number | null }> {
+  // check if its already in cache
   const cached = await cacheGet<{
     raw: SolarmanHistoricalResponse;
+    start: string;
+    end: string;
     ts?: string;
   }>(key);
-  if (cached?.raw) {
-    return { energy: sumHistorical(cached.raw), ts: cached.ts ?? ts, ttlSec };
+  if (cached?.raw && cached.start === start && cached.end === end) {
+    return { solar: sumSolar(cached.raw), ts: cached.ts ?? ts, ttlSec };
   }
-  const raw = await fetchRaw();
-  await cacheSet(key, { raw, ts }, ttlSec);
-  return { energy: sumHistorical(raw), ts, ttlSec };
+
+  // fetch if not found in cache
+  const raw = await fetchBillingPeriod(getParam("DEVICE_SN"), start, end);
+  await cacheSet(key, { raw, start, end, ts }, ttlSec);
+  return { solar: sumSolar(raw), ts, ttlSec };
 }
 
 async function loadElecRates(): Promise<ElecRate[]> {
@@ -329,8 +311,16 @@ function costFor(
     };
   }
 
+  // THE one place import is subtracted: the meter sees the whole house
+  // (bypass_kwh is gross), SolarMAN already counted part of that grid power
+  // as import, so net new grid power = gross - import (floored at 0 for
+  // stale manual readings).
+  const bypassNetKwh = Math.max(
+    0,
+    round1(energy.bypass_kwh - energy.grid_import_kwh),
+  );
   const consumed_php = Math.round(energy.consumed_kwh * rate_php_per_kwh);
-  const bypass_php = Math.round(energy.bypass_kwh * rate_php_per_kwh);
+  const bypass_php = Math.round(bypassNetKwh * rate_php_per_kwh);
   const solar_php = Math.round(energy.generated_kwh * rate_php_per_kwh);
 
   return {
@@ -358,39 +348,113 @@ const todayIso = () => {
   return `${t.y}-${pad2(t.m)}-${pad2(t.d)}`;
 };
 
-const currentMonth = () => {
-  const t = manilaToday();
-  return `${t.y}-${pad2(t.m)}`;
-};
-
 const currentYear = () => manilaToday().y;
 
-function dayInfo(date: string | undefined) {
-  const base = date ?? todayIso();
-  const [y, m, d] = base.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  const iso = `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
-  const isCurrent = iso === todayIso();
+/** Billing month YYYY-MM means window [prevMonth-17, month-16] inclusive, Manila. */
+function billingWindowForMonth(mm: string): { start: string; end: string } {
+  const [y, m] = mm.split("-").map(Number);
+  const prev = new Date(Date.UTC(y, m - 1, 1));
+  prev.setUTCMonth(prev.getUTCMonth() - 1);
+  const py = prev.getUTCFullYear();
+  const pm = prev.getUTCMonth() + 1;
   return {
-    key: `day:${iso}`,
-    ts: `${iso}T00:00:00+08:00`,
-    isCurrent,
-    ttlSec: isCurrent ? DAY_TTL_SEC : null,
-    iso,
+    start: `${py}-${pad2(pm)}-17`,
+    end: `${y}-${pad2(m)}-16`,
   };
 }
 
+/** Billing mm containing today: d<=16 -> calendar month, else next month. */
+function billingCurrentMonth(): string {
+  const t = manilaToday();
+  if (t.d <= 16) return `${t.y}-${pad2(t.m)}`;
+  const dt = new Date(Date.UTC(t.y, t.m - 1, 1));
+  dt.setUTCMonth(dt.getUTCMonth() + 1);
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}`;
+}
+
+function normalizeMm(mm: string | undefined, fallback: string): string {
+  if (mm && /^\d{4}-\d{2}$/.test(mm)) {
+    const m = Number(mm.slice(5, 7));
+    if (m >= 1 && m <= 12) return mm;
+  }
+  return fallback;
+}
+
+// count number of day from start to end inclusive e.g: 09-01 to 09-16 is 16 days
+function inclusiveDayCount(start: string, end: string): number {
+  return isoToDay(end) - isoToDay(start) + 1;
+}
+
+/**
+ * Single call when <=30 days inclusive, else split at the calendar month
+ * Reason being Solarman API only accepts 30 days... but some months are 31 days :(
+ * Billing window is 17th day current month to 16th day of next month
+ */
+async function fetchBillingPeriod(
+  deviceSn: string,
+  start: string,
+  end: string,
+): Promise<SolarmanHistoricalResponse> {
+  if (end < start) return { paramDataList: [] }; // unreachable but you never know
+
+  const fetchRaw = (
+    deviceSn: string,
+    timeType: number,
+    startTime: string,
+    endTime: string,
+  ) =>
+    solarmanPost<SolarmanHistoricalResponse>("device/v1.0/historical", {
+      deviceSn,
+      timeType,
+      startTime,
+      endTime,
+    });
+
+  // single call because it's <= 30, this is only used in fetching a single day
+  if (inclusiveDayCount(start, end) <= 30) {
+    return fetchRaw(deviceSn, 2, start, end);
+  }
+
+  // splits call into 2 eg:
+  // 03-17 to 04-16
+  // will call [03-17 to 03-31] and [04-01 to 04-16]
+  const [y, m] = start.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); // last day of prev month
+  const partAEnd = `${y}-${pad2(m)}-${pad2(last)}`;
+  const partBStart = `${end.slice(0, 7)}-01`; // first day of next month
+
+  const [a, b] = await Promise.all([
+    fetchRaw(deviceSn, 2, start, partAEnd),
+    fetchRaw(deviceSn, 2, partBStart, end),
+  ]);
+
+  // merge the outputs
+  const merged: SolarmanHistoricalResponse["paramDataList"] = [];
+  for (const p of [a, b]) {
+    for (const entry of p?.paramDataList ?? []) merged.push(entry);
+  }
+  return { paramDataList: merged };
+}
+
 function monthInfo(month: string | undefined) {
-  const base = month ?? currentMonth();
-  const [y, m] = base.split("-").map(Number);
-  const mm = `${y}-${pad2(m)}`;
-  const isCurrent = mm === currentMonth();
+  const mm = normalizeMm(month, billingCurrentMonth());
+  const { start, end } = billingWindowForMonth(mm);
+  const today = todayIso();
+  const isFuture = start > today;
+  const isCurrent = !isFuture && end >= today;
+  const cappedEnd = isFuture ? end : end < today ? end : today;
+  const ts = `${cappedEnd}T00:00:00+08:00`;
   return {
     key: `month:${mm}`,
-    ts: `${mm}-01T00:00:00+08:00`,
+    ts,
     isCurrent,
+    isFuture,
     ttlSec: isCurrent ? MONTH_TTL_SEC : null,
     mm,
+    start,
+    end,
+    cappedEnd,
+    elapsedDays: isFuture ? 0 : inclusiveDayCount(start, cappedEnd),
   };
 }
 
@@ -417,143 +481,133 @@ async function loadBypassReadings(): Promise<BypassReading[]> {
   );
 }
 
-function bypassGlobalAvg(readings: BypassReading[]): number {
+// ---------------------------------------------------------------------------
+// Manual bypass meter: cumulative readings -> kWh/day -> gross kWh estimate.
+// Always extrapolates from the latest segment (stale readings accepted).
+// Returns GROSS house-meter kWh; import is subtracted later, once, in costFor.
+// ---------------------------------------------------------------------------
+function meterDailyRate(readings: BypassReading[]): number {
   if (readings.length < 2) return 0;
   const first = readings[0];
   const last = readings[readings.length - 1];
-  const span = last.day - first.day;
-  if (span <= 0) return 0;
-  const rate = (last.cum - first.cum) / span;
-  return rate > 0 ? rate : 0;
-}
-
-function bypassSegmentRate(
-  a: BypassReading,
-  b: BypassReading,
-  fallback: number,
-): number {
-  const span = b.day - a.day;
-  if (span <= 0) return fallback;
-  const rate = (b.cum - a.cum) / span;
-  return rate > 0 ? rate : 0;
-}
-
-function findBracket(
-  readings: BypassReading[],
-  isBefore: (r: BypassReading) => boolean,
-  isAfter: (r: BypassReading) => boolean,
-): { lower?: BypassReading; upper?: BypassReading } {
-  let lower: BypassReading | undefined;
-  let upper: BypassReading | undefined;
-  for (const r of readings) {
-    if (isBefore(r)) lower = r;
-    if (isAfter(r) && !upper) upper = r;
+  const prev = readings[readings.length - 2];
+  const segSpan = last.day - prev.day;
+  if (segSpan > 0 && last.cum > prev.cum) {
+    return (last.cum - prev.cum) / segSpan;
   }
-  return { lower, upper };
-}
-
-function bypassDailyRate(readings: BypassReading[], iso: string): number {
-  const fallback = bypassGlobalAvg(readings);
-  if (readings.length < 2) return 0;
-  const targetDay = isoToDay(iso);
-  const latest = readings[readings.length - 1];
-  if (iso.slice(0, 7) === latest.iso.slice(0, 7)) {
-    return bypassSegmentRate(readings[readings.length - 2], latest, fallback);
+  const fullSpan = last.day - first.day;
+  if (fullSpan > 0 && last.cum > first.cum) {
+    return (last.cum - first.cum) / fullSpan;
   }
-  const { lower, upper } = findBracket(
-    readings,
-    (r) => r.day < targetDay,
-    (r) => r.day > targetDay,
-  );
-  return lower && upper ? bypassSegmentRate(lower, upper, fallback) : fallback;
+  return 0;
 }
 
-function bypassMonthRate(readings: BypassReading[], mm: string): number {
-  const fallback = bypassGlobalAvg(readings);
-  if (readings.length < 2) return 0;
-  const latest = readings[readings.length - 1];
-  if (mm === latest.iso.slice(0, 7)) {
-    return bypassSegmentRate(readings[readings.length - 2], latest, fallback);
-  }
-  const { lower, upper } = findBracket(
-    readings,
-    (r) => r.iso.slice(0, 7) < mm,
-    (r) => r.iso.slice(0, 7) > mm,
-  );
-  return lower && upper ? bypassSegmentRate(lower, upper, fallback) : fallback;
+function meterGrossKwh(readings: BypassReading[], days: number): number {
+  if (days <= 0) return 0;
+  return round1(meterDailyRate(readings) * days);
 }
 
-function bypassYearRate(readings: BypassReading[], yyyy: string): number {
-  const fallback = bypassGlobalAvg(readings);
-  if (readings.length < 2) return 0;
-  const { lower, upper } = findBracket(
-    readings,
-    (r) => r.iso.slice(0, 4) < yyyy,
-    (r) => r.iso.slice(0, 4) > yyyy,
-  );
-  return lower && upper ? bypassSegmentRate(lower, upper, fallback) : fallback;
-}
+// ---------------------------------------------------------------------------
+// Period builders. Each returns solar totals + GROSS bypass for its window.
+// Billing month YYYY-MM = [prevMonth-17, month-16] inclusive (Manila).
+// ---------------------------------------------------------------------------
+async function energyForDay(date: string): Promise<PeriodResult> {
+  // validates and normalizes date into iso format "YYYY-MM-DD"
+  const [y, m, d] = date.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const iso = `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+  const isCurrent = iso === todayIso();
 
-function daysInMonth(mm: string): number {
-  const [y, m] = mm.split("-").map(Number);
-  return new Date(Date.UTC(y, m, 0)).getUTCDate();
-}
-
-function isLeapYear(yyyy: string): boolean {
-  const y = Number(yyyy);
-  return y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
-}
-
-function bypassMonthMultiplier(mm: string): number {
-  const current = currentMonth();
-  if (mm > current) return 0;
-  if (mm === current) return manilaToday().d;
-  return daysInMonth(mm);
-}
-
-function bypassYearMultiplier(yyyy: string): number {
-  return isLeapYear(yyyy) ? 366 : 365;
-}
-
-async function energyForDay(date: string | undefined): Promise<PeriodResult> {
-  const info = dayInfo(date);
-  const result = await loadPeriod(info.key, info.ts, info.ttlSec, () =>
-    fetchHistoricalRaw(getParam("DEVICE_SN"), 2, info.iso, info.iso),
-  );
   const readings = await loadBypassReadings();
-  result.energy.bypass_kwh = round1(bypassDailyRate(readings, info.iso));
-  return result;
+  const { solar, ts, ttlSec } = await loadSolarRange(
+    `data:${iso}`,
+    `${iso}T00:00:00+08:00`,
+    isCurrent ? DAY_TTL_SEC : null,
+    iso,
+    iso,
+  );
+  return {
+    energy: { ...solar, bypass_kwh: meterGrossKwh(readings, 1) },
+    ts,
+    ttlSec,
+  };
 }
 
 async function energyForMonth(
   month: string | undefined,
 ): Promise<PeriodResult> {
   const info = monthInfo(month);
-  const result = await loadPeriod(info.key, info.ts, info.ttlSec, () =>
-    fetchHistoricalRaw(getParam("DEVICE_SN"), 3, info.mm, info.mm),
-  );
+  if (info.isFuture) {
+    return {
+      energy: { ...ZERO_SOLAR, bypass_kwh: 0 },
+      ts: info.ts,
+      ttlSec: info.ttlSec,
+    };
+  }
   const readings = await loadBypassReadings();
-  result.energy.bypass_kwh = round1(
-    bypassMonthRate(readings, info.mm) * bypassMonthMultiplier(info.mm),
+  const { solar, ts, ttlSec } = await loadSolarRange(
+    info.key,
+    info.ts,
+    info.ttlSec,
+    info.start,
+    info.cappedEnd,
   );
-  return result;
+  return {
+    energy: { ...solar, bypass_kwh: meterGrossKwh(readings, info.elapsedDays) },
+    ts,
+    ttlSec,
+  };
+}
+
+function billingMonthsForYear(y: number): string[] {
+  return Array.from({ length: 12 }, (_, i) => `${y}-${pad2(i + 1)}`);
+}
+
+function billingYearContainsToday(y: number, today: string): boolean {
+  return billingMonthsForYear(y).some((mm) => {
+    const w = billingWindowForMonth(mm);
+    return w.start <= today && w.end >= today;
+  });
 }
 
 async function energyForYear(year: string | undefined): Promise<PeriodResult> {
-  const y = Number(year ?? currentYear());
-  const ts = `${y}-01-01T00:00:00+08:00`;
-  const isCurrent = y === currentYear();
-  const result = await loadPeriod(
-    `year:${y}`,
-    ts,
-    isCurrent ? YEAR_TTL_SEC : null,
-    () => fetchHistoricalRaw(getParam("DEVICE_SN"), 4, String(y), String(y)),
-  );
+  const y = Number(year ?? billingCurrentMonth().slice(0, 4)) || currentYear();
+  const key = `year:${y}`;
+  const ts = `${y}-12-16T00:00:00+08:00`;
+  const today = todayIso();
+  const isCurrentYear = billingYearContainsToday(y, today);
+  const ttlSec = isCurrentYear ? YEAR_TTL_SEC : null;
+
+  // Past years never change: serve the cached aggregate.
+  if (!isCurrentYear) {
+    const cached = await cacheGet<{ energy: EnergyTotals; ts: string }>(key);
+    if (cached?.energy) return { energy: cached.energy, ts, ttlSec };
+  }
+
+  // Current year always recomputed so the growing partial month stays fresh.
+  // Each billing month shares its cache entry with the month view.
   const readings = await loadBypassReadings();
-  result.energy.bypass_kwh = round1(
-    bypassYearRate(readings, String(y)) * bypassYearMultiplier(String(y)),
-  );
-  return result;
+  let solar = { ...ZERO_SOLAR };
+  let elapsedDays = 0;
+  for (const mm of billingMonthsForYear(y)) {
+    const info = monthInfo(mm);
+    if (info.isFuture) continue;
+    const r = await loadSolarRange(
+      info.key,
+      info.ts,
+      info.ttlSec,
+      info.start,
+      info.cappedEnd,
+    );
+    solar = addSolar(solar, r.solar);
+    elapsedDays += info.elapsedDays;
+  }
+  const energy: EnergyTotals = {
+    ...solar,
+    bypass_kwh: meterGrossKwh(readings, elapsedDays),
+  };
+  if (!isCurrentYear) await cacheSet(key, { energy, ts }, ttlSec);
+  return { energy, ts, ttlSec };
 }
 
 function resolveOrigin(ev: LambdaEvent): string | undefined {
@@ -592,11 +646,6 @@ function jsonResponse(
   };
 }
 
-function getRoutePath(ev: LambdaEvent): string {
-  const fullPath = ev.path ?? ev.rawPath ?? "";
-  return fullPath.replace(/\/$/, "").split("/").pop() ?? "";
-}
-
 function parseJsonBody(ev: LambdaEvent): Record<string, unknown> {
   if (!ev.body) return {};
   try {
@@ -613,14 +662,36 @@ function requireValidPassword(password: string): void {
 }
 
 async function handleLive(ev: LambdaEvent): Promise<APIGatewayProxyResult> {
-  const live = mapLive(await getLive());
+  let body: SolarmanLiveResponse;
+  const cached = await cacheGet<SolarmanLiveResponse>("live");
+  if (cached) {
+    body = cached;
+  } else {
+    body = await solarmanPost("device/v1,0/currentData", {
+      deviceSn: getParam("DEVICE_SN"),
+    });
+    await cacheSet("live", body, LIVE_TTL_SEC);
+  }
+
+  const m = toKeyValueMap(body.dataList);
+
+  const data = {
+    solar_w: Math.round(
+      toNumber(m.DP1) + toNumber(m.DP2) + toNumber(m.DP3) + toNumber(m.DP4),
+    ),
+    home_w: Math.round(toNumber(m.E_Puse_t1 ?? m.C_P_L1)),
+    grid_w: Math.round(toNumber(m.T_A_P_O_G ?? m.UAP1)),
+    battery_w: Math.round(-toNumber(m.B_P1)),
+    battery_soc_pct: Math.round(toNumber(m.B_left_cap1)),
+  };
+
   const t = manilaToday();
   const rates = await loadElecRates();
   return jsonResponse(
     200,
     {
       timestamp: `${t.y}-${pad2(t.m)}-${pad2(t.d)}T00:00:00+08:00`,
-      live,
+      live: data,
       elec_rate: latestElecRate(rates),
     },
     ev,
@@ -635,7 +706,7 @@ async function handleEnergyPeriod(
 ): Promise<APIGatewayProxyResult> {
   const result =
     period === "day"
-      ? await energyForDay(query.date)
+      ? await energyForDay(query.date ?? todayIso())
       : period === "month"
         ? await energyForMonth(query.month)
         : await energyForYear(query.year);
@@ -643,8 +714,15 @@ async function handleEnergyPeriod(
   const rates = await loadElecRates();
   const rate =
     period === "year"
-      ? avgRateForYear(rates, result.ts.slice(0, 4))
-      : rateForMonth(rates, result.ts.slice(0, 7));
+      ? avgRateForYear(
+          rates,
+          /^\d{4}$/.test(query.year ?? "")
+            ? String(query.year)
+            : billingCurrentMonth().slice(0, 4),
+        )
+      : period === "month"
+        ? rateForMonth(rates, normalizeMm(query.month, billingCurrentMonth()))
+        : rateForMonth(rates, result.ts.slice(0, 7));
 
   return jsonResponse(
     200,
@@ -732,14 +810,15 @@ async function handleRateUpdate(
 export const handler = async (
   ev: LambdaEvent,
 ): Promise<APIGatewayProxyResult> => {
-  const path = getRoutePath(ev);
+  const fullPath = ev.path ?? ev.rawPath ?? "";
+  const path = fullPath.replace(/\/$/, "").split("/").pop() ?? "";
+
   const query = (ev.queryStringParameters ?? {}) as Record<
     string,
     string | undefined
   >;
 
   config = await loadParams(SSM_PREFIX);
-
   try {
     switch (path) {
       case "live":
@@ -756,8 +835,6 @@ export const handler = async (
         return jsonResponse(404, { error: "unknown route" }, ev);
     }
   } catch (e) {
-    const status = e instanceof HttpError ? e.status : 500;
-    const message = e instanceof Error ? e.message : "internal";
-    return jsonResponse(status, { error: message }, ev);
+    return jsonResponse(500, { error: JSON.stringify(e) }, ev);
   }
 };

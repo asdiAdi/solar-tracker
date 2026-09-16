@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { postRateUpdate } from "../lib/api";
-import { MONTH_NAMES, currentYear } from "../lib/date";
+import { MONTH_NAMES, currentYear, formatBillingLabel } from "../lib/date";
 
 const thisYear = currentYear();
 const YEARS = Array.from({ length: 8 }, (_, i) => String(thisYear - 5 + i));
@@ -57,9 +57,9 @@ export default function RateUpdatePage() {
             Electricity Rate Update
           </h1>
           <p className="text-sm mt-2" style={{ color: "var(--muted)" }}>
-            Saving overwrites the existing rate for that month. Past periods
-            keep their own month&apos;s rate; missing months fall back to the
-            latest rate.
+            Billing period: rate for {formatBillingLabel(`${year}-${month}`)}.
+            Saving overwrites the existing rate for that billing month; missing
+            months fall back to the latest rate.
           </p>
         </header>
         <form

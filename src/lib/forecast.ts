@@ -18,6 +18,8 @@ export interface ForecastInputs {
   monthConsumedKwh?: number;
   yearConsumedKwh?: number;
   elecRatePhpPerKwh?: number | null;
+  elapsedBillingDays?: number;
+  billingMonthLength?: number;
 }
 
 interface Sky {
@@ -145,6 +147,8 @@ function estimateForecast(
     monthConsumedKwh,
     yearConsumedKwh,
     elecRatePhpPerKwh,
+    elapsedBillingDays,
+    billingMonthLength,
   }: Required<Omit<ForecastInputs, "elecRatePhpPerKwh">> & {
     elecRatePhpPerKwh: number | null;
   },
@@ -184,9 +188,13 @@ function estimateForecast(
     ? Math.max(0, bypassDailyAvgKwh)
     : 0;
 
+  const monthElapsed =
+    Number.isFinite(elapsedBillingDays) && elapsedBillingDays > 0
+      ? elapsedBillingDays
+      : now.getDate();
   const monthDailyAvg = periodDailyAverage(
     monthConsumedKwh,
-    now.getDate(),
+    monthElapsed,
     fullDayConsumption,
   );
   const yearDailyAvg = periodDailyAverage(
@@ -200,8 +208,11 @@ function estimateForecast(
   let sunHoursResult = sunHours[todayIndex] ?? FALLBACK_SUN_HOURS;
 
   if (period === "month") {
-    const monthLength = daysInMonth(now);
-    const remainingDays = Math.max(0, monthLength - now.getDate());
+    const monthLength =
+      Number.isFinite(billingMonthLength) && billingMonthLength > 0
+        ? billingMonthLength
+        : daysInMonth(now);
+    const remainingDays = Math.max(0, monthLength - monthElapsed);
     yieldKwh =
       periodSolarKwh + remainderToday + avgFuturePotential * remainingDays;
     consumptionKwh = monthDailyAvg * monthLength + bypassDaily * monthLength;
@@ -245,6 +256,8 @@ export async function fetchForecast(
       monthConsumedKwh: inputs.monthConsumedKwh ?? NaN,
       yearConsumedKwh: inputs.yearConsumedKwh ?? NaN,
       elecRatePhpPerKwh: inputs.elecRatePhpPerKwh ?? null,
+      elapsedBillingDays: inputs.elapsedBillingDays ?? NaN,
+      billingMonthLength: inputs.billingMonthLength ?? NaN,
     });
   } catch {
     return null;

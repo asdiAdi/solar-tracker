@@ -4,6 +4,8 @@ import {
   type Forecast,
   type ForecastPeriod,
 } from "../lib/forecast";
+import { billingCurrentMonthISO, billingElapsedDays, billingMonthLength } from "../lib/date";
+import { netBypassKwh } from "../lib/energy";
 import { isNA, kwhParts, php, sunH } from "../lib/format";
 import LoadingSpinner from "./LoadingSpinner";
 
@@ -106,10 +108,13 @@ function useForecastInputs(
     const monthConsumedKwh = month?.energy.consumed_kwh ?? NaN;
     const yearSolarKwh = year?.energy.generated_kwh ?? NaN;
     const yearConsumedKwh = year?.energy.consumed_kwh ?? NaN;
-    const monthBypassKwh = month?.energy.bypass_kwh ?? NaN;
+    const monthBypassKwh = month ? netBypassKwh(month.energy) : NaN;
 
     const now = new Date();
-    const elapsedDaysInMonth = now.getDate();
+    const billingMm = billingCurrentMonthISO();
+    const elapsedBilling = billingElapsedDays(billingMm);
+    const billingLength = billingMonthLength(billingMm);
+    const elapsedDaysInMonth = elapsedBilling > 0 ? elapsedBilling : now.getDate();
     const dayOfYearNow = dayOfYear(now);
 
     const bypassDailyAvgKwh =
@@ -161,6 +166,8 @@ function useForecastInputs(
       bypassDailyAvgKwh,
       monthConsumedKwh,
       yearConsumedKwh,
+      elapsedBillingDays: elapsedBilling,
+      billingMonthLength: billingLength,
       missing,
     };
   }, [period, day, month, year]);
@@ -207,6 +214,8 @@ export default function ForecastCard({
       monthConsumedKwh: inputs.monthConsumedKwh,
       yearConsumedKwh: inputs.yearConsumedKwh,
       elecRatePhpPerKwh: elecRate,
+      elapsedBillingDays: inputs.elapsedBillingDays,
+      billingMonthLength: inputs.billingMonthLength,
     })
       .then((f) => {
         if (live) setResult(f);

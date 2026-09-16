@@ -1,4 +1,5 @@
 import { isNA, kwhParts } from "../lib/format";
+import { netBypassKwh } from "../lib/energy";
 import LoadingSpinner from "./LoadingSpinner";
 
 export default function TotalsCards({
@@ -14,7 +15,7 @@ export default function TotalsCards({
     { t: "Generated", v: energy.generated_kwh, tone: "var(--good)" },
     { t: "Consumed", v: energy.consumed_kwh, tone: "var(--accent)" },
     { t: "Imported", v: energy.grid_import_kwh, tone: "var(--warn)" },
-    { t: "Bypassed", v: energy.bypass_kwh, tone: "var(--bad)" },
+    { t: "Bypassed", v: netBypassKwh(energy), tone: "var(--bad)" },
   ];
   return (
     <section

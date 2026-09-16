@@ -18,7 +18,8 @@
     "deploy:prod": "STAGE=prod npm run bundle && STAGE=prod cdk deploy --all --require-approval never",
     "build:dev": "tsc -b && vite build && npm run synth:dev",
     "build:prod": "tsc -b && vite build && npm run synth:prod",
-    "test:live": "node infra/test/fetch-live.mjs"
+    "test:live": "node infra/test/fetch-live.mjs",
+    "test:serve": "npx tsx watch --env-file=.env.test.serve infra/test/local-server.ts"
   },
   "dependencies": {
     "@asdi/aws-infra": "^0.4.2",

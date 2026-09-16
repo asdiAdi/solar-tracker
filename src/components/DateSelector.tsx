@@ -1,13 +1,13 @@
 import { useState } from "react";
 import CalendarModal from "./CalendarModal";
 import {
+  billingCurrentMonthISO,
   clampDayMaxToday,
   clampMonthMaxCurrent,
   clampYearMaxCurrent,
-  currentMonthISO,
   currentYear,
+  formatBillingLabel,
   formatFullDay,
-  formatMonthLabel,
   shiftDay,
   shiftMonth,
   todayISO,
@@ -40,11 +40,11 @@ export default function DateSelector({
     period === "day"
       ? formatFullDay(day)
       : period === "month"
-        ? formatMonthLabel(month)
+        ? formatBillingLabel(month)
         : year;
 
   const atDayMax = day >= todayISO();
-  const atMonthMax = month >= currentMonthISO();
+  const atMonthMax = month >= billingCurrentMonthISO();
   const atYearMax = Number(year) >= currentYear();
 
   return (
