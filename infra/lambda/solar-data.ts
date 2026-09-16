@@ -474,21 +474,36 @@ async function loadBypassReadings(): Promise<BypassReading[]> {
   );
 }
 
-function meterDailyRate(): number {
-  if (bypassReadings.length < 2) return 0;
-  const first = bypassReadings[0];
-  const last = bypassReadings[bypassReadings.length - 1];
-  const prev = bypassReadings[bypassReadings.length - 2];
-  const segSpan = last.day - prev.day;
-  if (segSpan > 0 && last.cum > prev.cum) {
-    return (last.cum - prev.cum) / segSpan;
+function bypassKwhForRange(startIso: string, endIso: string): number {
+  const s = isoToDay(startIso);
+  const e = isoToDay(endIso);
+  if (!bypassReadings || bypassReadings.length < 2 || e < s) return 0;
+
+  // Each valid pair of readings covers days (prev.day, cur.day] at a constant rate.
+  const segs: { from: number; to: number; rate: number }[] = [];
+  for (let i = 1; i < bypassReadings.length; i++) {
+    const a = bypassReadings[i - 1];
+    const b = bypassReadings[i];
+    const span = b.day - a.day;
+    const delta = b.cum - a.cum;
+    if (span > 0 && delta > 0) {
+      segs.push({ from: a.day + 1, to: b.day, rate: delta / span });
+    }
   }
-  // unreachable
-  const fullSpan = last.day - first.day;
-  if (fullSpan > 0 && last.cum > first.cum) {
-    return (last.cum - first.cum) / fullSpan;
+  if (segs.length === 0) return 0;
+
+  // Gaps (skipped pairs) inherit the preceding rate; the ends extend forever.
+  for (let i = 0; i < segs.length - 1; i++) segs[i].to = segs[i + 1].from - 1;
+  segs[0].from = -Infinity;
+  segs[segs.length - 1].to = Infinity;
+
+  let total = 0;
+  for (const { from, to, rate } of segs) {
+    const lo = Math.max(s, from);
+    const hi = Math.min(e, to);
+    if (hi >= lo) total += (hi - lo + 1) * rate;
   }
-  return 0;
+  return total;
 }
 
 async function energyForDay(date: string): Promise<PeriodResult> {
@@ -506,7 +521,7 @@ async function energyForDay(date: string): Promise<PeriodResult> {
     iso,
   );
   return {
-    energy: { ...solar, bypass_kwh: meterDailyRate() },
+    energy: { ...solar, bypass_kwh: bypassKwhForRange(iso, iso) },
     ts,
     ttlSec,
   };
@@ -533,7 +548,7 @@ async function energyForMonth(
   return {
     energy: {
       ...solar,
-      bypass_kwh: meterDailyRate() * info.elapsedDays,
+      bypass_kwh: bypassKwhForRange(info.start, info.cappedEnd),
     },
     ts,
     ttlSec,
@@ -568,7 +583,7 @@ async function energyForYear(year: string | undefined): Promise<PeriodResult> {
   // Current year always recomputed so the growing partial month stays fresh.
   // Each billing month shares its cache entry with the month view.
   let solar = { ...ZERO_SOLAR };
-  let elapsedDays = 0;
+  let bypass_kwh = 0;
   for (const mm of billingMonthsForYear(y)) {
     const info = monthInfo(mm);
     if (info.isFuture) continue;
@@ -580,11 +595,11 @@ async function energyForYear(year: string | undefined): Promise<PeriodResult> {
       info.cappedEnd,
     );
     solar = addSolar(solar, r.solar);
-    elapsedDays += info.elapsedDays;
+    bypass_kwh += bypassKwhForRange(info.start, info.cappedEnd);
   }
   const energy: EnergyTotals = {
     ...solar,
-    bypass_kwh: meterDailyRate() * elapsedDays,
+    bypass_kwh,
   };
   if (!isCurrentYear) await cacheSet(key, { energy, ts }, ttlSec);
   return { energy, ts, ttlSec };
