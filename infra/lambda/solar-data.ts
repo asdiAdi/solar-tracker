@@ -324,13 +324,11 @@ async function loadElecRates(): Promise<ElecRate[]> {
   return rates.sort((a, b) => (a.mm < b.mm ? -1 : a.mm > b.mm ? 1 : 0));
 }
 
-function rateForMonth(mm: string | undefined): number | null {
-  if (!mm) return null;
+function rateForMonth(mm: string): number {
   return elecRates.find((r) => r.mm === mm)?.rate ?? latestElecrate;
 }
 
-function avgRateForYear(yyyy: string | undefined): number | null {
-  if (!yyyy) return null;
+function avgRateForYear(yyyy: string | number): number {
   const values = elecRates
     .filter((r) => r.mm.startsWith(`${yyyy}-`))
     .map((r) => r.rate);
@@ -338,40 +336,21 @@ function avgRateForYear(yyyy: string | undefined): number | null {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-function costFor(
-  energy: EnergyTotals,
-  rate: number | null | undefined,
-): CostBreakdown {
-  const rate_php_per_kwh =
-    Number.isFinite(Number(rate)) && Number(rate) > 0 ? Number(rate) : null;
-  if (rate_php_per_kwh == null) {
-    return {
-      consumed_php: NaN,
-      bypass_php: NaN,
-      solar_php: NaN,
-      net_php: NaN,
-      rate_php_per_kwh: null,
-    };
-  }
-
-  // THE one place import is subtracted: the meter sees the whole house
-  // (bypass_kwh is gross), SolarMAN already counted part of that grid power
-  // as import, so net new grid power = gross - import (floored at 0 for
-  // stale manual readings).
+function costFor(energy: EnergyTotals, rate: number): CostBreakdown {
   const bypassNetKwh = Math.max(
     0,
     round1(energy.bypass_kwh - energy.grid_import_kwh),
   );
-  const consumed_php = Math.round(energy.consumed_kwh * rate_php_per_kwh);
-  const bypass_php = Math.round(bypassNetKwh * rate_php_per_kwh);
-  const solar_php = Math.round(energy.generated_kwh * rate_php_per_kwh);
+  const consumed_php = Math.round(energy.consumed_kwh * rate);
+  const bypass_php = Math.round(bypassNetKwh * rate);
+  const solar_php = Math.round(energy.generated_kwh * rate);
 
   return {
     consumed_php,
     bypass_php,
     solar_php,
     net_php: consumed_php + bypass_php - solar_php,
-    rate_php_per_kwh,
+    rate_php_per_kwh: rate,
   };
 }
 
@@ -390,8 +369,6 @@ const todayIso = () => {
   const t = manilaToday();
   return `${t.y}-${pad2(t.m)}-${pad2(t.d)}`;
 };
-
-const currentYear = () => manilaToday().y;
 
 /** Billing month YYYY-MM means window [prevMonth-17, month-16] inclusive, Manila. */
 function billingWindowForMonth(mm: string): { start: string; end: string } {
@@ -544,15 +521,14 @@ function billingYearContainsToday(y: number, today: string): boolean {
   });
 }
 
-async function energyForYear(year: string | undefined): Promise<PeriodResult> {
-  const y = Number(year ?? billingCurrentMonth().slice(0, 4)) || currentYear();
+async function energyForYear(year: string | number): Promise<PeriodResult> {
+  const y = Number(year);
   const key = `year:${y}`;
   const ts = `${y}-12-16T00:00:00+08:00`;
   const today = todayIso();
   const isCurrentYear = billingYearContainsToday(y, today);
   const ttlSec = isCurrentYear ? YEAR_TTL_SEC : null;
 
-  // Past years never change: serve the cached aggregate.
   if (!isCurrentYear) {
     const cached = await cacheGet<{ energy: EnergyTotals; ts: string }>(key);
     if (cached?.energy) return { energy: cached.energy, ts, ttlSec };
@@ -674,19 +650,33 @@ async function handleEnergyPeriod(
   query: Record<string, string | undefined>,
   ev: LambdaEvent,
 ): Promise<APIGatewayProxyResult> {
+  const today = todayIso();
+  if (period === "day" && (query.date ?? today) > today)
+    return jsonResponse(400, { error: "future date" }, ev);
+  if (
+    period === "month" &&
+    (query.month ?? billingCurrentMonth()) > billingCurrentMonth()
+  )
+    return jsonResponse(400, { error: "future month" }, ev);
+  if (
+    period === "year" &&
+    Number(query.year ?? manilaToday().y) > manilaToday().y
+  )
+    return jsonResponse(400, { error: "future year" }, ev);
+
   const result =
     period === "day"
       ? await energyForDay(query.date ?? todayIso())
       : period === "month"
         ? await energyForMonth(query.month ?? billingCurrentMonth())
-        : await energyForYear(query.year);
+        : await energyForYear(query.year ?? manilaToday().y);
 
   const rate =
     period === "year"
-      ? avgRateForYear(query.year)
+      ? avgRateForYear(query.year ?? manilaToday().y)
       : period === "month"
-        ? rateForMonth(query.month)
-        : rateForMonth(result.ts.slice(0, 7));
+        ? rateForMonth(query.month ?? billingCurrentMonth())
+        : rateForMonth(result.ts.slice(0, 7) ?? todayIso());
 
   return jsonResponse(
     200,
