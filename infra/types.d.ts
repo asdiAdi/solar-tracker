@@ -11,6 +11,13 @@ interface SolarmanHistoricalResponse {
   paramDataList?: { dataList?: SolarmanDataPoint[] }[];
 }
 
+interface SolarTotals {
+  generated_kwh: number;
+  consumed_kwh: number;
+  grid_import_kwh: number;
+  grid_export_kwh: number;
+}
+
 interface LiveMetrics {
   solar_w: number;
   home_w: number;

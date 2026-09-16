@@ -44,6 +44,13 @@ const MONTH_TTL_SEC = 60 * 60;
 const YEAR_TTL_SEC = 24 * 60 * 60;
 const PAST_TTL_SEC = 365 * 24 * 60 * 60;
 
+const ZERO_SOLAR: SolarTotals = {
+  generated_kwh: 0,
+  consumed_kwh: 0,
+  grid_import_kwh: 0,
+  grid_export_kwh: 0,
+};
+
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
@@ -63,6 +70,10 @@ function toKeyValueMap(dataList: SolarmanDataPoint[] = []): StringMap {
 let ssmClient: SSMClient | null = null;
 let ssmCache: StringMap | null = null;
 let config: StringMap = {};
+let elecRates: ElecRate[];
+let latestElecrate: number;
+let bypassReadings: BypassReading[];
+
 function getSSmClient(): SSMClient {
   if (!ssmClient) {
     ssmClient = new SSMClient();
@@ -152,9 +163,10 @@ async function cacheSet<T>(
   } catch {}
 }
 
-async function scanByPrefix<T>(
+// scan the table and parse using callback function
+async function scanByPrefix<T, K = unknown>(
   prefix: string,
-  parse: (pk: string, data: unknown) => T | undefined,
+  parse: (pk: string, data: K) => T | undefined,
 ): Promise<T[]> {
   const client = getDocClient();
   if (!client) return [];
@@ -194,24 +206,7 @@ async function solarmanPost<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// ---------------------------------------------------------------------------
-// Solar totals (SolarMAN only). Bypass is NOT here on purpose: it comes from
-// the manual meter and is combined with import exactly once in costFor.
-// ---------------------------------------------------------------------------
-interface SolarTotals {
-  generated_kwh: number;
-  consumed_kwh: number;
-  grid_import_kwh: number;
-  grid_export_kwh: number;
-}
-
-const ZERO_SOLAR: SolarTotals = {
-  generated_kwh: 0,
-  consumed_kwh: 0,
-  grid_import_kwh: 0,
-  grid_export_kwh: 0,
-};
-
+// solarman data is per day, this function will add all of them for a single output
 function sumSolar(raw: SolarmanHistoricalResponse): SolarTotals {
   let generated = 0;
   let consumed = 0;
@@ -241,6 +236,58 @@ function addSolar(a: SolarTotals, b: SolarTotals): SolarTotals {
   };
 }
 
+async function fetchHistoricalRaw(
+  deviceSn: string,
+  timeType: number,
+  startTime: string,
+  endTime: string,
+) {
+  return solarmanPost<SolarmanHistoricalResponse>("device/v1.0/historical", {
+    deviceSn,
+    timeType,
+    startTime,
+    endTime,
+  });
+}
+
+/**
+ * Single call when <=30 days inclusive, else split at the calendar month
+ * Reason being Solarman API only accepts 30 days... but some months are 31 days :(
+ * Billing window is 17th day current month to 16th day of next month
+ */
+async function fetchBillingPeriod(
+  deviceSn: string,
+  start: string,
+  end: string,
+): Promise<SolarmanHistoricalResponse> {
+  if (end < start) return { paramDataList: [] }; // unreachable but you never know
+
+  // single call because it's <= 30, this is only used in fetching a single day
+  if (inclusiveDayCount(start, end) <= 30) {
+    return fetchHistoricalRaw(deviceSn, 2, start, end);
+  }
+
+  // splits call into 2 eg:
+  // 03-17 to 04-16
+  // will call [03-17 to 03-31] and [04-01 to 04-16]
+  const [y, m] = start.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); // last day of prev month
+  const partAEnd = `${y}-${pad2(m)}-${pad2(last)}`;
+  const partBStart = `${end.slice(0, 7)}-01`; // first day of next month
+
+  const [a, b] = await Promise.all([
+    fetchHistoricalRaw(deviceSn, 2, start, partAEnd),
+    fetchHistoricalRaw(deviceSn, 2, partBStart, end),
+  ]);
+
+  // merge the outputs
+  const merged: SolarmanHistoricalResponse["paramDataList"] = [];
+  for (const p of [a, b]) {
+    for (const entry of p?.paramDataList ?? []) merged.push(entry);
+  }
+  return { paramDataList: merged };
+}
+
 async function loadSolarRange(
   key: string, // key e.g: day:2023-02-02
   ts: string, // timestamp
@@ -259,39 +306,37 @@ async function loadSolarRange(
     return { solar: sumSolar(cached.raw), ts: cached.ts ?? ts, ttlSec };
   }
 
-  // fetch if not found in cache
+  // fetch if not found in cache then set cache
   const raw = await fetchBillingPeriod(getParam("DEVICE_SN"), start, end);
   await cacheSet(key, { raw, start, end, ts }, ttlSec);
   return { solar: sumSolar(raw), ts, ttlSec };
 }
 
+// fetch list of all elec rates
 async function loadElecRates(): Promise<ElecRate[]> {
-  const rates = await scanByPrefix<ElecRate>(ELEC_RATE_PREFIX, (pk, data) => {
-    const mm = pk.slice(ELEC_RATE_PREFIX.length);
-    if (!/^\d{4}-\d{2}$/.test(mm)) return undefined;
-    const month = Number(mm.slice(5, 7));
-    if (month < 1 || month > 12) return undefined;
-    const rate = Number((data as { rate?: unknown } | undefined)?.rate);
-    if (!Number.isFinite(rate) || rate <= 0) return undefined;
-    return { mm, rate };
-  });
+  if (elecRates) return elecRates;
+  const rates = await scanByPrefix<ElecRate, { rate: string }>(
+    ELEC_RATE_PREFIX,
+    (pk, data) => ({
+      mm: pk.slice(ELEC_RATE_PREFIX.length),
+      rate: Number(data.rate),
+    }),
+  );
 
   return rates.sort((a, b) => (a.mm < b.mm ? -1 : a.mm > b.mm ? 1 : 0));
 }
 
-function latestElecRate(rates: ElecRate[]): number | null {
-  return rates.length ? rates[rates.length - 1].rate : null;
+function rateForMonth(mm: string | undefined): number | null {
+  if (!mm) return null;
+  return elecRates.find((r) => r.mm === mm)?.rate ?? latestElecrate;
 }
 
-function rateForMonth(rates: ElecRate[], mm: string): number | null {
-  return rates.find((r) => r.mm === mm)?.rate ?? latestElecRate(rates);
-}
-
-function avgRateForYear(rates: ElecRate[], yyyy: string): number | null {
-  const values = rates
+function avgRateForYear(yyyy: string | undefined): number | null {
+  if (!yyyy) return null;
+  const values = elecRates
     .filter((r) => r.mm.startsWith(`${yyyy}-`))
     .map((r) => r.rate);
-  if (!values.length) return latestElecRate(rates);
+
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
@@ -385,57 +430,6 @@ function inclusiveDayCount(start: string, end: string): number {
   return isoToDay(end) - isoToDay(start) + 1;
 }
 
-/**
- * Single call when <=30 days inclusive, else split at the calendar month
- * Reason being Solarman API only accepts 30 days... but some months are 31 days :(
- * Billing window is 17th day current month to 16th day of next month
- */
-async function fetchBillingPeriod(
-  deviceSn: string,
-  start: string,
-  end: string,
-): Promise<SolarmanHistoricalResponse> {
-  if (end < start) return { paramDataList: [] }; // unreachable but you never know
-
-  const fetchRaw = (
-    deviceSn: string,
-    timeType: number,
-    startTime: string,
-    endTime: string,
-  ) =>
-    solarmanPost<SolarmanHistoricalResponse>("device/v1.0/historical", {
-      deviceSn,
-      timeType,
-      startTime,
-      endTime,
-    });
-
-  // single call because it's <= 30, this is only used in fetching a single day
-  if (inclusiveDayCount(start, end) <= 30) {
-    return fetchRaw(deviceSn, 2, start, end);
-  }
-
-  // splits call into 2 eg:
-  // 03-17 to 04-16
-  // will call [03-17 to 03-31] and [04-01 to 04-16]
-  const [y, m] = start.split("-").map(Number);
-  const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); // last day of prev month
-  const partAEnd = `${y}-${pad2(m)}-${pad2(last)}`;
-  const partBStart = `${end.slice(0, 7)}-01`; // first day of next month
-
-  const [a, b] = await Promise.all([
-    fetchRaw(deviceSn, 2, start, partAEnd),
-    fetchRaw(deviceSn, 2, partBStart, end),
-  ]);
-
-  // merge the outputs
-  const merged: SolarmanHistoricalResponse["paramDataList"] = [];
-  for (const p of [a, b]) {
-    for (const entry of p?.paramDataList ?? []) merged.push(entry);
-  }
-  return { paramDataList: merged };
-}
-
 function monthInfo(month: string | undefined) {
   const mm = normalizeMm(month, billingCurrentMonth());
   const { start, end } = billingWindowForMonth(mm);
@@ -463,38 +457,33 @@ function isoToDay(iso: string): number {
   return Math.floor(Date.UTC(y, m - 1, d) / 86_400_000);
 }
 
+// fetch list of all bypass,
 async function loadBypassReadings(): Promise<BypassReading[]> {
-  const readings = await scanByPrefix<BypassReading>(
-    BYPASS_PREFIX,
-    (pk, data) => {
-      const iso = pk.slice(BYPASS_PREFIX.length);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return undefined;
-      const cum = Number(
-        (data as { cumulative_kwh?: unknown } | undefined)?.cumulative_kwh,
-      );
-      if (!Number.isFinite(cum) || cum < 0) return undefined;
-      return { iso, day: isoToDay(iso), cum };
-    },
-  );
+  if (bypassReadings) return bypassReadings;
+  const readings = await scanByPrefix<
+    BypassReading,
+    { cumulative_kwh: string }
+  >(BYPASS_PREFIX, (pk, data) => ({
+    iso: pk.slice(BYPASS_PREFIX.length),
+    day: isoToDay(pk.slice(BYPASS_PREFIX.length)),
+    cum: Number(data.cumulative_kwh),
+  }));
+
   return readings.sort((a, b) =>
     a.day === b.day ? a.cum - b.cum : a.day - b.day,
   );
 }
 
-// ---------------------------------------------------------------------------
-// Manual bypass meter: cumulative readings -> kWh/day -> gross kWh estimate.
-// Always extrapolates from the latest segment (stale readings accepted).
-// Returns GROSS house-meter kWh; import is subtracted later, once, in costFor.
-// ---------------------------------------------------------------------------
-function meterDailyRate(readings: BypassReading[]): number {
-  if (readings.length < 2) return 0;
-  const first = readings[0];
-  const last = readings[readings.length - 1];
-  const prev = readings[readings.length - 2];
+function meterDailyRate(): number {
+  if (bypassReadings.length < 2) return 0;
+  const first = bypassReadings[0];
+  const last = bypassReadings[bypassReadings.length - 1];
+  const prev = bypassReadings[bypassReadings.length - 2];
   const segSpan = last.day - prev.day;
   if (segSpan > 0 && last.cum > prev.cum) {
     return (last.cum - prev.cum) / segSpan;
   }
+  // unreachable
   const fullSpan = last.day - first.day;
   if (fullSpan > 0 && last.cum > first.cum) {
     return (last.cum - first.cum) / fullSpan;
@@ -502,15 +491,6 @@ function meterDailyRate(readings: BypassReading[]): number {
   return 0;
 }
 
-function meterGrossKwh(readings: BypassReading[], days: number): number {
-  if (days <= 0) return 0;
-  return round1(meterDailyRate(readings) * days);
-}
-
-// ---------------------------------------------------------------------------
-// Period builders. Each returns solar totals + GROSS bypass for its window.
-// Billing month YYYY-MM = [prevMonth-17, month-16] inclusive (Manila).
-// ---------------------------------------------------------------------------
 async function energyForDay(date: string): Promise<PeriodResult> {
   // validates and normalizes date into iso format "YYYY-MM-DD"
   const [y, m, d] = date.split("-").map(Number);
@@ -518,7 +498,6 @@ async function energyForDay(date: string): Promise<PeriodResult> {
   const iso = `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
   const isCurrent = iso === todayIso();
 
-  const readings = await loadBypassReadings();
   const { solar, ts, ttlSec } = await loadSolarRange(
     `data:${iso}`,
     `${iso}T00:00:00+08:00`,
@@ -527,7 +506,7 @@ async function energyForDay(date: string): Promise<PeriodResult> {
     iso,
   );
   return {
-    energy: { ...solar, bypass_kwh: meterGrossKwh(readings, 1) },
+    energy: { ...solar, bypass_kwh: meterDailyRate() },
     ts,
     ttlSec,
   };
@@ -544,7 +523,6 @@ async function energyForMonth(
       ttlSec: info.ttlSec,
     };
   }
-  const readings = await loadBypassReadings();
   const { solar, ts, ttlSec } = await loadSolarRange(
     info.key,
     info.ts,
@@ -553,7 +531,10 @@ async function energyForMonth(
     info.cappedEnd,
   );
   return {
-    energy: { ...solar, bypass_kwh: meterGrossKwh(readings, info.elapsedDays) },
+    energy: {
+      ...solar,
+      bypass_kwh: meterDailyRate() * info.elapsedDays,
+    },
     ts,
     ttlSec,
   };
@@ -586,7 +567,6 @@ async function energyForYear(year: string | undefined): Promise<PeriodResult> {
 
   // Current year always recomputed so the growing partial month stays fresh.
   // Each billing month shares its cache entry with the month view.
-  const readings = await loadBypassReadings();
   let solar = { ...ZERO_SOLAR };
   let elapsedDays = 0;
   for (const mm of billingMonthsForYear(y)) {
@@ -604,7 +584,7 @@ async function energyForYear(year: string | undefined): Promise<PeriodResult> {
   }
   const energy: EnergyTotals = {
     ...solar,
-    bypass_kwh: meterGrossKwh(readings, elapsedDays),
+    bypass_kwh: meterDailyRate() * elapsedDays,
   };
   if (!isCurrentYear) await cacheSet(key, { energy, ts }, ttlSec);
   return { energy, ts, ttlSec };
@@ -674,7 +654,6 @@ async function handleLive(ev: LambdaEvent): Promise<APIGatewayProxyResult> {
   }
 
   const m = toKeyValueMap(body.dataList);
-
   const data = {
     solar_w: Math.round(
       toNumber(m.DP1) + toNumber(m.DP2) + toNumber(m.DP3) + toNumber(m.DP4),
@@ -686,13 +665,12 @@ async function handleLive(ev: LambdaEvent): Promise<APIGatewayProxyResult> {
   };
 
   const t = manilaToday();
-  const rates = await loadElecRates();
   return jsonResponse(
     200,
     {
       timestamp: `${t.y}-${pad2(t.m)}-${pad2(t.d)}T00:00:00+08:00`,
       live: data,
-      elec_rate: latestElecRate(rates),
+      elec_rate: latestElecrate,
     },
     ev,
     LIVE_TTL_SEC,
@@ -711,18 +689,12 @@ async function handleEnergyPeriod(
         ? await energyForMonth(query.month)
         : await energyForYear(query.year);
 
-  const rates = await loadElecRates();
   const rate =
     period === "year"
-      ? avgRateForYear(
-          rates,
-          /^\d{4}$/.test(query.year ?? "")
-            ? String(query.year)
-            : billingCurrentMonth().slice(0, 4),
-        )
+      ? avgRateForYear(query.year)
       : period === "month"
-        ? rateForMonth(rates, normalizeMm(query.month, billingCurrentMonth()))
-        : rateForMonth(rates, result.ts.slice(0, 7));
+        ? rateForMonth(query.month)
+        : rateForMonth(result.ts.slice(0, 7));
 
   return jsonResponse(
     200,
@@ -818,7 +790,12 @@ export const handler = async (
     string | undefined
   >;
 
+  // initialize most used values
   config = await loadParams(SSM_PREFIX);
+  elecRates = await loadElecRates();
+  latestElecrate = elecRates.at(-1)!.rate;
+  bypassReadings = await loadBypassReadings();
+
   try {
     switch (path) {
       case "live":
