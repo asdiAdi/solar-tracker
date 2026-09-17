@@ -3,31 +3,32 @@ import LoadingSpinner from "./LoadingSpinner";
 
 export default function CostCards({
   cost,
+  elecRate,
   energy,
   label,
   netLabel,
   loading = false,
 }: {
   cost: CostTotals;
+  elecRate: number;
   energy: EnergyTotals;
   label: string;
   netLabel: string;
   loading?: boolean;
 }) {
-  const rate = cost.rate_php_per_kwh;
   const formula = (v: number) => {
     if (loading) return null;
     if (isNA(v)) return "N/A";
-    if (typeof rate !== "number" || !Number.isFinite(rate))
+    if (typeof elecRate !== "number" || !Number.isFinite(elecRate))
       return `${v.toFixed(1)} kWh`;
-    return `${v.toFixed(1)} kWh × ₱${rate.toFixed(2)}/kWh`;
+    return `${v.toFixed(1)} kWh × ₱${elecRate.toFixed(2)}/kWh`;
   };
   const bypassFormula = () => {
     if (loading) return null;
     if (isNA(energy.bypass_kwh) || isNA(energy.grid_import_kwh)) return "N/A";
-    if (typeof rate !== "number" || !Number.isFinite(rate))
+    if (typeof elecRate !== "number" || !Number.isFinite(elecRate))
       return `${energy.bypass_kwh.toFixed(1)} kWh`;
-    return `${energy.bypass_kwh.toFixed(1)} × ₱${rate.toFixed(2)}/kWh`;
+    return `${energy.bypass_kwh.toFixed(1)} × ₱${elecRate.toFixed(2)}/kWh`;
   };
   const solarMissing = !loading && isNA(cost.solar_php);
   const netMissing = !loading && isNA(cost.net_php);

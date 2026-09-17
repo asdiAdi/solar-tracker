@@ -1,7 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CONFIG } from "./config";
 import { getLive, getPeriod } from "./lib/api";
-import { billingCurrentMonthISO, currentYear, formatBillingLabel, todayISO } from "./lib/date";
+import {
+  billingCurrentMonthISO,
+  currentYear,
+  formatBillingLabel,
+  todayISO,
+} from "./lib/date";
 import ThemeSwitcher, { getInitialTheme } from "./components/ThemeSwitcher";
 import PeriodTabs from "./components/PeriodTabs";
 import DateSelector from "./components/DateSelector";
@@ -10,9 +15,11 @@ import BypassUpdatePage from "./components/BypassUpdatePage";
 import RateUpdatePage from "./components/RateUpdatePage";
 import TotalsCards from "./components/TotalsCards";
 import CostCards from "./components/CostCards";
-import ForecastCard from "./components/ForecastCard";
+// import ForecastCard from "./components/ForecastCard";
 
 const NA = Number.NaN;
+
+const DEFAULT_ELEC_RATE = NA;
 
 const DEFAULT_LIVE: LiveValues = {
   solar_w: NA,
@@ -35,7 +42,6 @@ const DEFAULT_COST: CostTotals = {
   bypass_php: NA,
   solar_php: NA,
   net_php: NA,
-  rate_php_per_kwh: null,
 };
 
 const ROUTES: Record<string, React.ComponentType> = {
@@ -186,13 +192,14 @@ function MainApp() {
     }
   }, [fetchLive, fetchPeriod, period, cacheKey]);
 
-  const keys = useMemo(currentKeys, [dateKey]);
+  // const keys = useMemo(currentKeys, [dateKey]);
   const cur = data[cacheKey] ?? null;
-  const dayData = data[keys.day] ?? null;
-  const monthData = data[keys.month] ?? null;
-  const yearData = data[keys.year] ?? null;
+  // const dayData = data[keys.day] ?? null;
+  // const monthData = data[keys.month] ?? null;
+  // const yearData = data[keys.year] ?? null;
 
   const liveValues = live?.live ?? DEFAULT_LIVE;
+  const elecRate = live?.elec_rate ?? cur?.elec_rate ?? DEFAULT_ELEC_RATE;
   const energy = cur?.energy ?? DEFAULT_ENERGY;
   const cost = cur?.cost ?? DEFAULT_COST;
   const label = PERIOD_LABEL[period](dateKey);
@@ -201,7 +208,7 @@ function MainApp() {
   const isFetchingCur = (pending[cacheKey] ?? 0) > 0;
   const isLiveLoading = live == null;
   const isPeriodLoading = !error && (cur == null || isFetchingCur);
-  const isForecastFetching = Object.values(pending).some((n) => n > 0);
+  // const isForecastFetching = Object.values(pending).some((n) => n > 0);
 
   return (
     <div
@@ -268,19 +275,20 @@ function MainApp() {
         <TotalsCards energy={energy} label={label} loading={isPeriodLoading} />
         <CostCards
           cost={cost}
+          elecRate={elecRate}
           energy={energy}
           label={label}
           netLabel={netLabel}
           loading={isPeriodLoading}
         />
-        <ForecastCard
-          period={period}
-          day={dayData}
-          month={monthData}
-          year={yearData}
-          fetching={isForecastFetching}
-          elecRate={live?.elec_rate ?? null}
-        />
+        {/* <ForecastCard */}
+        {/*   period={period} */}
+        {/*   day={dayData} */}
+        {/*   month={monthData} */}
+        {/*   year={yearData} */}
+        {/*   fetching={isForecastFetching} */}
+        {/*   elecRate={live?.elec_rate ?? null} */}
+        {/* /> */}
       </div>
     </div>
   );

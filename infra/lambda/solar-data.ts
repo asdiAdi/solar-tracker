@@ -657,7 +657,9 @@ async function handleEnergyPeriod(
         solar_php: Math.round(result.energy.generated_kwh * rate),
         net_php: Math.round(
           (result.energy.consumed_kwh +
-            result.energy.bypass_kwh -
+            result.energy.bypass_kwh +
+            result.energy.grid_export_kwh -
+            result.energy.grid_import_kwh -
             result.energy.generated_kwh) *
             rate,
         ),

@@ -19,7 +19,6 @@ interface CostTotals {
   bypass_php: number;
   solar_php: number;
   net_php: number;
-  rate_php_per_kwh: number | null;
 }
 
 interface LiveResponse {
