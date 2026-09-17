@@ -10,11 +10,13 @@ lerna-debug.log*
 node_modules
 dist
 dist-infra/
+dist-lambda/
 cdk.out
 scratch/
 dist-ssr
 *.local
 .env
+!.env.example
 *.tsbuildinfo
 
 # Editor directories and files

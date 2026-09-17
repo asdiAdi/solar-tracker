@@ -1,0 +1,91 @@
+name: DEV Build, Deploy and Sync to AWS
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+env:
+  STAGE: dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Fetch frontend param from SSM
+        run: |
+          aws ssm get-parameters-by-path \
+            --path "/solar-tracker/frontend/dev/" \
+            --with-decryption \
+            --recursive \
+            --query "Parameters[*].[Name,Value]" \
+            --output text | while IFS=$'\t' read -r name value; do
+              key=$(basename "$name")
+              echo "::add-mask::$value"
+              echo "$key=$value" >> "$GITHUB_ENV"
+            done
+
+      - name: Build frontend
+        run: npm run build:vite
+
+      - name: Fetch github-action param from SSM
+        run: |
+          aws ssm get-parameters-by-path \
+            --path "/solar-tracker/github-action/dev/" \
+            --with-decryption \
+            --recursive \
+            --query "Parameters[*].[Name,Value]" \
+            --output text | while IFS=$'\t' read -r name value; do
+              key=$(basename "$name")
+              echo "::add-mask::$value"
+              echo "$key=$value" >> "$GITHUB_ENV"
+            done
+
+      - name: Deploy backend stack
+        run: npm run deploy:dev
+
+      - name: Sync static files to S3
+        run: aws s3 sync dist/ s3://$S3_BUCKET --delete
+
+      - name: Set no-cache for service worker and manifest
+        run: |
+          for f in sw.js registerSW.js manifest.webmanifest; do
+            if [ -f "dist/$f" ]; then
+              ct="application/javascript"
+              if [ "$f" = "manifest.webmanifest" ]; then ct="application/manifest+json"; fi
+              aws s3 cp "dist/$f" "s3://$S3_BUCKET/$f" --cache-control "public, max-age=0, must-revalidate" --content-type "$ct" --metadata-directive REPLACE
+            fi
+          done
+          for f in dist/workbox-*.js; do
+            [ -e "$f" ] || continue
+            aws s3 cp "$f" "s3://$S3_BUCKET/$(basename "$f")" --cache-control "public, max-age=0, must-revalidate" --content-type "application/javascript" --metadata-directive REPLACE
+          done
+
+      - name: Invalidate CloudFront Cache
+        run: aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_DISTRIBUTION_ID --paths "/*"

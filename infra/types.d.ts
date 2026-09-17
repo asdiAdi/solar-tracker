@@ -11,6 +11,12 @@ interface SolarmanHistoricalResponse {
   paramDataList?: { dataList?: SolarmanDataPoint[] }[];
 }
 
+interface SolarTotals {
+  generated_kwh: number;
+  consumed_kwh: number;
+  grid_import_kwh: number;
+}
+
 interface LiveMetrics {
   solar_w: number;
   home_w: number;
@@ -23,27 +29,14 @@ interface EnergyTotals {
   generated_kwh: number;
   consumed_kwh: number;
   grid_import_kwh: number;
-  grid_export_kwh: number;
+  system_loss_kwh: number;
   bypass_kwh: number;
 }
 
-interface CostBreakdown {
-  consumed_php: number;
-  bypass_php: number;
-  solar_php: number;
-  net_php: number;
-  rate_php_per_kwh: number | null;
-}
-
-interface ElecRate {
-  mm: string;
-  rate: number;
-}
-
-interface BypassReading {
-  iso: string; // YYYY-MM-DD
-  day: number; // days since epoch, for arithmetic
-  cum: number; // cumulative kWh at that date
+interface ManualUpdate {
+  mm: string; // YYYY-MM billing month
+  rate: number; // ₱/kWh
+  bypass_kwh: number; // final bypass kWh for the billing window
 }
 
 interface PeriodResult {

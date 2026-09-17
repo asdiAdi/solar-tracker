@@ -1,18 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CONFIG } from "./config";
 import { getLive, getPeriod } from "./lib/api";
-import { currentMonthISO, currentYear, todayISO } from "./lib/date";
+import {
+  billingCurrentMonthISO,
+  clampDay,
+  clampMonth,
+  clampYear,
+  currentYear,
+  formatBillingLabel,
+  todayISO,
+} from "./lib/date";
 import ThemeSwitcher, { getInitialTheme } from "./components/ThemeSwitcher";
 import PeriodTabs from "./components/PeriodTabs";
 import DateSelector from "./components/DateSelector";
 import LiveCards from "./components/LiveCards";
-import BypassUpdatePage from "./components/BypassUpdatePage";
-import RateUpdatePage from "./components/RateUpdatePage";
+import MonthlyUpdatePage from "./components/MonthlyUpdatePage";
 import TotalsCards from "./components/TotalsCards";
 import CostCards from "./components/CostCards";
-import ForecastCard from "./components/ForecastCard";
+// import ForecastCard from "./components/ForecastCard";
 
 const NA = Number.NaN;
+
+const DEFAULT_ELEC_RATE = NA;
 
 const DEFAULT_LIVE: LiveValues = {
   solar_w: NA,
@@ -26,35 +35,33 @@ const DEFAULT_ENERGY: EnergyTotals = {
   generated_kwh: NA,
   consumed_kwh: NA,
   grid_import_kwh: NA,
-  grid_export_kwh: NA,
+  system_loss_kwh: NA,
   bypass_kwh: NA,
 };
 
 const DEFAULT_COST: CostTotals = {
   consumed_php: NA,
   bypass_php: NA,
+  system_loss_php: NA,
   solar_php: NA,
   net_php: NA,
-  rate_php_per_kwh: null,
 };
 
 const ROUTES: Record<string, React.ComponentType> = {
-  "/bypass-update": BypassUpdatePage,
-  "/rate-update": RateUpdatePage,
+  "/monthly-update": MonthlyUpdatePage,
 };
 
 const keyFor = (kind: Period, value: string) => `${kind}:${value}`;
 
 const currentKeys = () => ({
   day: keyFor("day", todayISO()),
-  month: keyFor("month", currentMonthISO()),
+  month: keyFor("month", billingCurrentMonthISO()),
   year: keyFor("year", String(currentYear())),
 });
 
 const PERIOD_LABEL: Record<Period, (selected: string) => string> = {
   day: (selected) => (selected === todayISO() ? "Today" : selected),
-  month: (selected) =>
-    selected === currentMonthISO() ? "This month" : selected,
+  month: (selected) => formatBillingLabel(selected),
   year: () => String(currentYear()),
 };
 
@@ -70,11 +77,70 @@ export default function App() {
   return Route ? <Route /> : <MainApp />;
 }
 
+const VIEW_KEY = "solar-tracker-view";
+
+type StoredView = {
+  period?: unknown;
+  day?: unknown;
+  month?: unknown;
+  year?: unknown;
+};
+
+function loadStoredView(): StoredView {
+  try {
+    const raw = localStorage.getItem(VIEW_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as StoredView;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function initialPeriod(stored: StoredView): Period {
+  return stored.period === "day" ||
+    stored.period === "month" ||
+    stored.period === "year"
+    ? stored.period
+    : "day";
+}
+
+function initialDay(stored: StoredView): string {
+  if (
+    typeof stored.day === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(stored.day)
+  ) {
+    const clamped = clampDay(stored.day);
+    return clamped > todayISO() ? todayISO() : clamped;
+  }
+  return clampDay(todayISO());
+}
+
+function initialMonth(stored: StoredView): string {
+  if (typeof stored.month === "string" && /^\d{4}-\d{2}$/.test(stored.month)) {
+    const clamped = clampMonth(stored.month);
+    const cur = billingCurrentMonthISO();
+    return clamped > cur ? cur : clamped;
+  }
+  return clampMonth(billingCurrentMonthISO());
+}
+
+function initialYear(stored: StoredView): string {
+  if (typeof stored.year === "string" && /^\d{4}$/.test(stored.year)) {
+    const clamped = clampYear(stored.year);
+    const cur = String(currentYear());
+    return Number(clamped) > Number(cur) ? cur : clamped;
+  }
+  return clampYear(String(currentYear()));
+}
+
 function MainApp() {
-  const [period, setPeriod] = useState<Period>("day");
-  const [day, setDay] = useState(todayISO());
-  const [month, setMonth] = useState(currentMonthISO());
-  const [year, setYear] = useState(String(currentYear()));
+  const [period, setPeriod] = useState<Period>(() =>
+    initialPeriod(loadStoredView()),
+  );
+  const [day, setDay] = useState(() => initialDay(loadStoredView()));
+  const [month, setMonth] = useState(() => initialMonth(loadStoredView()));
+  const [year, setYear] = useState(() => initialYear(loadStoredView()));
   const [data, setData] = useState<Record<string, PeriodResponse>>({});
   const [live, setLive] = useState<LiveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +150,17 @@ function MainApp() {
   useEffect(() => {
     document.documentElement.dataset.theme = getInitialTheme();
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        VIEW_KEY,
+        JSON.stringify({ v: 1, period, day, month, year }),
+      );
+    } catch {
+      // private mode / quota — non-fatal, just skip persistence
+    }
+  }, [period, day, month, year]);
 
   const dateKey = period === "day" ? day : period === "month" ? month : year;
   const cacheKey = keyFor(period, dateKey);
@@ -187,13 +264,14 @@ function MainApp() {
     }
   }, [fetchLive, fetchPeriod, period, cacheKey]);
 
-  const keys = useMemo(currentKeys, [dateKey]);
+  // const keys = useMemo(currentKeys, [dateKey]);
   const cur = data[cacheKey] ?? null;
-  const dayData = data[keys.day] ?? null;
-  const monthData = data[keys.month] ?? null;
-  const yearData = data[keys.year] ?? null;
+  // const dayData = data[keys.day] ?? null;
+  // const monthData = data[keys.month] ?? null;
+  // const yearData = data[keys.year] ?? null;
 
   const liveValues = live?.live ?? DEFAULT_LIVE;
+  const elecRate = live?.elec_rate ?? cur?.elec_rate ?? DEFAULT_ELEC_RATE;
   const energy = cur?.energy ?? DEFAULT_ENERGY;
   const cost = cur?.cost ?? DEFAULT_COST;
   const label = PERIOD_LABEL[period](dateKey);
@@ -202,21 +280,21 @@ function MainApp() {
   const isFetchingCur = (pending[cacheKey] ?? 0) > 0;
   const isLiveLoading = live == null;
   const isPeriodLoading = !error && (cur == null || isFetchingCur);
-  const isForecastFetching = Object.values(pending).some((n) => n > 0);
+  // const isForecastFetching = Object.values(pending).some((n) => n > 0);
 
   return (
     <div
       className="min-h-screen"
       style={{ background: "var(--bg)", color: "var(--text)" }}
     >
-      <div className="max-w-2xl mx-auto px-4 pb-12 flex flex-col gap-4">
+      <div className="max-w-2xl mx-auto px-3 sm:px-4 pb-12 flex flex-col gap-4">
         <header className="pt-5 flex flex-col gap-3">
           <div className="flex items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2.5">
-              <span className="text-2xl" aria-hidden>
+            <div className="flex items-center gap-2.5 flex-1 min-w-0">
+              <span className="text-2xl shrink-0" aria-hidden>
                 ☀️
               </span>
-              <h1 className="text-xl font-bold tracking-tight leading-none">
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight leading-none truncate">
                 {CONFIG.APP_NAME}
               </h1>
             </div>
@@ -225,14 +303,24 @@ function MainApp() {
               onClick={onRefresh}
               disabled={refreshing}
               aria-label="Refresh data"
-              className="px-3 py-1.5 rounded-lg font-semibold"
+              title="Refresh data"
+              className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg font-medium shrink-0 inline-flex items-center justify-center gap-1.5 text-sm sm:text-base"
               style={{
-                background: "var(--chip)",
-                color: "var(--text)",
-                opacity: refreshing ? 0.6 : 1,
+                background: "transparent",
+                color: "var(--muted)",
+                opacity: refreshing ? 0.5 : 0.75,
+                border: "1px solid transparent",
               }}
             >
-              {refreshing ? "Refreshing…" : "Refresh"}
+              <span aria-hidden className="text-base leading-none">
+                ⟳
+              </span>
+              <span className="hidden sm:inline text-base">
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </span>
+              <span className="visually-hidden">
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </span>
             </button>
           </div>
           <ThemeSwitcher />
@@ -262,19 +350,20 @@ function MainApp() {
         <TotalsCards energy={energy} label={label} loading={isPeriodLoading} />
         <CostCards
           cost={cost}
+          elecRate={elecRate}
           energy={energy}
           label={label}
           netLabel={netLabel}
           loading={isPeriodLoading}
         />
-        <ForecastCard
-          period={period}
-          day={dayData}
-          month={monthData}
-          year={yearData}
-          fetching={isForecastFetching}
-          elecRate={live?.elec_rate ?? null}
-        />
+        {/* <ForecastCard */}
+        {/*   period={period} */}
+        {/*   day={dayData} */}
+        {/*   month={monthData} */}
+        {/*   year={yearData} */}
+        {/*   fetching={isForecastFetching} */}
+        {/*   elecRate={live?.elec_rate ?? null} */}
+        {/* /> */}
       </div>
     </div>
   );

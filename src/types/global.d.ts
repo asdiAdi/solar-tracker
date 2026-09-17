@@ -10,7 +10,7 @@ interface EnergyTotals {
   generated_kwh: number;
   consumed_kwh: number;
   grid_import_kwh: number;
-  grid_export_kwh: number;
+  system_loss_kwh: number;
   bypass_kwh: number;
 }
 
@@ -18,8 +18,8 @@ interface CostTotals {
   consumed_php: number;
   bypass_php: number;
   solar_php: number;
+  system_loss_php: number;
   net_php: number;
-  rate_php_per_kwh: number | null;
 }
 
 interface LiveResponse {

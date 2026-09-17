@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
 import {
+  MIN_MONTH_ISO,
+  MIN_YEAR,
   MONTH_NAMES,
+  billingCurrentMonthISO,
   currentMonthISO,
   currentYear,
+  isDayDisabled,
+  isMonthDisabled,
+  isYearDisabled,
   parseDay,
   parseMonth,
   toDayISO,
@@ -137,15 +143,16 @@ function DayGrid({
   const curYm = currentMonthISO();
   const viewYm = toMonthISO(viewY, viewM);
   const atMaxMonth = viewYm >= curYm;
+  const atMinMonth = viewYm <= MIN_MONTH_ISO;
 
   const firstWeekday = new Date(viewY, viewM - 1, 1).getDay();
   const daysInMonth = new Date(viewY, viewM, 0).getDate();
+  const trailingBlanks = 42 - (firstWeekday + daysInMonth);
 
   const step = (d: number) => {
     const dt = new Date(viewY, viewM - 1 + d, 1);
     const ny = dt.getFullYear();
     const nm = dt.getMonth() + 1;
-    if (toMonthISO(ny, nm) > curYm) return;
     setViewY(ny);
     setViewM(nm);
   };
@@ -154,18 +161,19 @@ function DayGrid({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <button
-          className="px-3 py-1.5 rounded-lg text-lg font-bold"
-          style={navBtnStyle()}
+          className="px-3 py-1.5 rounded-lg text-lg font-bold w-11 shrink-0"
+          style={navBtnStyle(atMinMonth)}
           onClick={() => step(-1)}
+          disabled={atMinMonth}
           aria-label="Previous month"
         >
           ‹
         </button>
-        <span className="text-base font-bold">
+        <span className="text-base font-bold flex-1 text-center truncate">
           {MONTH_NAMES[viewM - 1]} {viewY}
         </span>
         <button
-          className="px-3 py-1.5 rounded-lg text-lg font-bold"
+          className="px-3 py-1.5 rounded-lg text-lg font-bold w-11 shrink-0"
           style={navBtnStyle(atMaxMonth)}
           onClick={() => step(1)}
           disabled={atMaxMonth}
@@ -191,19 +199,21 @@ function DayGrid({
           const d = i + 1;
           const iso = toDayISO(viewY, viewM, d);
           const isFuture = iso > today;
+          const isPastMin = isDayDisabled(iso);
+          const isDisabled = isFuture || isPastMin;
           const isSel = iso === selected;
           return (
             <button
               key={d}
               className={cellBase}
-              disabled={isFuture}
+              disabled={isDisabled}
               onClick={() => onPick(iso)}
               aria-label={`Pick ${iso}`}
               aria-pressed={isSel}
               style={
                 isSel
                   ? { background: "var(--accent)", color: "#fff", opacity: 1 }
-                  : isFuture
+                  : isDisabled
                     ? { color: "var(--muted)", opacity: 0.3 }
                     : { color: "var(--text)" }
               }
@@ -212,6 +222,9 @@ function DayGrid({
             </button>
           );
         })}
+        {Array.from({ length: trailingBlanks }).map((_, i) => (
+          <span key={`trailing-${i}`} />
+        ))}
       </div>
     </div>
   );
@@ -228,22 +241,23 @@ function MonthGrid({
   const init = parseMonth(selected);
   const [viewY, setViewY] = useState(init.y);
   const cy = currentYear();
-  const curYm = currentMonthISO();
+  const curYm = billingCurrentMonthISO();
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <button
-          className="px-3 py-1.5 rounded-lg text-lg font-bold"
-          style={navBtnStyle()}
+          className="px-3 py-1.5 rounded-lg text-lg font-bold w-11 shrink-0"
+          style={navBtnStyle(viewY <= MIN_YEAR)}
           onClick={() => setViewY((y) => y - 1)}
+          disabled={viewY <= MIN_YEAR}
           aria-label="Previous year"
         >
           ‹
         </button>
-        <span className="text-base font-bold">{viewY}</span>
+        <span className="text-base font-bold flex-1 text-center truncate">{viewY}</span>
         <button
-          className="px-3 py-1.5 rounded-lg text-lg font-bold"
+          className="px-3 py-1.5 rounded-lg text-lg font-bold w-11 shrink-0"
           style={navBtnStyle(viewY >= cy)}
           onClick={() => setViewY((y) => Math.min(cy, y + 1))}
           disabled={viewY >= cy}
@@ -257,18 +271,20 @@ function MonthGrid({
           const m = i + 1;
           const ym = toMonthISO(viewY, m);
           const isFuture = ym > curYm;
+          const isPastMin = isMonthDisabled(ym);
+          const isDisabled = isFuture || isPastMin;
           const isSel = ym === selected;
           return (
             <button
               key={name}
               className={cellBase}
-              disabled={isFuture}
+              disabled={isDisabled}
               onClick={() => onPick(ym)}
               aria-pressed={isSel}
               style={
                 isSel
                   ? { background: "var(--accent)", color: "#fff", opacity: 1 }
-                  : isFuture
+                  : isDisabled
                     ? { color: "var(--muted)", opacity: 0.3 }
                     : { color: "var(--text)" }
               }
@@ -296,24 +312,27 @@ function YearGrid({
   const [base, setBase] = useState(
     () => Math.min(selY, cy) - (Math.min(selY, cy) % PAGE),
   );
+  const minBase = MIN_YEAR - (MIN_YEAR % PAGE);
+  const atMinPage = base <= minBase;
   const years = Array.from({ length: PAGE }, (_, i) => base + i);
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <button
-          className="px-3 py-1.5 rounded-lg text-lg font-bold"
-          style={navBtnStyle()}
+          className="px-3 py-1.5 rounded-lg text-lg font-bold w-11 shrink-0"
+          style={navBtnStyle(atMinPage)}
           onClick={() => setBase((b) => b - PAGE)}
+          disabled={atMinPage}
           aria-label="Previous years"
         >
           ‹
         </button>
-        <span className="text-base font-bold">
+        <span className="text-base font-bold flex-1 text-center truncate">
           {base} – {Math.min(base + PAGE - 1, cy)}
         </span>
         <button
-          className="px-3 py-1.5 rounded-lg text-lg font-bold"
+          className="px-3 py-1.5 rounded-lg text-lg font-bold w-11 shrink-0"
           style={navBtnStyle(base + PAGE > cy)}
           onClick={() => setBase((b) => b + PAGE)}
           disabled={base + PAGE > cy}
@@ -325,17 +344,21 @@ function YearGrid({
       <div className="grid grid-cols-3 gap-1.5">
         {years.map((y) => {
           if (y > cy) return <span key={y} />;
+          const isPastMin = isYearDisabled(y);
           const isSel = String(y) === String(selected);
           return (
             <button
               key={y}
               className={cellBase}
+              disabled={isPastMin}
               onClick={() => onPick(String(y))}
               aria-pressed={isSel}
               style={
                 isSel
                   ? { background: "var(--accent)", color: "#fff" }
-                  : { color: "var(--text)" }
+                  : isPastMin
+                    ? { color: "var(--muted)", opacity: 0.3 }
+                    : { color: "var(--text)" }
               }
             >
               {y}

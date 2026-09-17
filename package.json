@@ -11,16 +11,23 @@
     "preview": "vite preview",
     "bundle": "esbuild infra/lambda/solar-data.ts --bundle --platform=node --target=node24 --format=cjs --outfile=infra/dist-lambda/index.js --external:aws-sdk",
     "synth": "npm run bundle && cdk synth -o dist-infra",
+    "synth:dev": "STAGE=dev npm run synth",
+    "synth:prod": "STAGE=prod npm run synth",
     "deploy": "npm run bundle && cdk deploy --all --require-approval never",
-    "test:live": "node infra/test/fetch-live.mjs"
+    "deploy:dev": "STAGE=dev npm run bundle && STAGE=dev cdk deploy --all --require-approval never",
+    "deploy:prod": "STAGE=prod npm run bundle && STAGE=prod cdk deploy --all --require-approval never",
+    "build:dev": "tsc -b && vite build && npm run synth:dev",
+    "build:prod": "tsc -b && vite build && npm run synth:prod",
+    "test:live": "node infra/test/fetch-live.mjs",
+    "test:serve": "npx tsx watch --env-file=.env.test.serve infra/test/local-server.ts"
   },
   "dependencies": {
-    "@asdi/aws-infra": "^0.1.3",
+    "@asdi/aws-infra": "^0.4.2",
     "@aws-sdk/client-dynamodb": "^3.1129.0",
+    "@aws-sdk/client-ssm": "^3.1132.0",
     "@aws-sdk/lib-dynamodb": "^3.1129.0",
     "aws-cdk-lib": "^2.269.0",
     "constructs": "^10.8.1",
-    "dotenv": "^17.4.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

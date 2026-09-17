@@ -3,39 +3,53 @@ import LoadingSpinner from "./LoadingSpinner";
 
 export default function CostCards({
   cost,
+  elecRate,
   energy,
   label,
   netLabel,
   loading = false,
 }: {
   cost: CostTotals;
+  elecRate: number;
   energy: EnergyTotals;
   label: string;
   netLabel: string;
   loading?: boolean;
 }) {
-  const rate = cost.rate_php_per_kwh;
   const formula = (v: number) => {
     if (loading) return null;
     if (isNA(v)) return "N/A";
-    if (typeof rate !== "number" || !Number.isFinite(rate))
-      return `${v.toFixed(1)} kWh`;
-    return `${v.toFixed(1)} kWh × ₱${rate.toFixed(2)}/kWh`;
+    if (typeof elecRate !== "number" || !Number.isFinite(elecRate))
+      return `${v.toFixed(1)}kWh`;
+    return `${v.toFixed(1)}kWh × ₱${elecRate.toFixed(2)}/kWh`;
   };
+  const gridFormula = () => {
+    if (loading) return null;
+    if (isNA(energy.bypass_kwh)) return "N/A";
+    return `${energy.bypass_kwh.toFixed(1)}kWh × ₱${elecRate.toFixed(2)}/kWh`;
+  };
+  const systemLossFormula = () => {
+    if (loading) return null;
+    if (isNA(energy.system_loss_kwh)) return "N/A";
+    return `${Math.abs(Number(energy.system_loss_kwh.toFixed(1)))}kWh × ₱${elecRate.toFixed(2)}/kWh`;
+  };
+
   const solarMissing = !loading && isNA(cost.solar_php);
   const netMissing = !loading && isNA(cost.net_php);
 
   return (
     <section
       aria-label={`${label} cost breakdown`}
-      className="card p-5 w-full"
+      className="card p-4 sm:p-5 w-full"
       aria-busy={loading || undefined}
     >
-      <div className="eyebrow mb-4">Total Cost</div>
-      <div className="flex flex-col gap-3 w-full">
+      <div className="eyebrow mb-3 sm:mb-4">Total Cost</div>
+      <div className="flex flex-col gap-2.5 sm:gap-3 w-full">
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
-            <div className="text-base font-semibold">Hybrid Power Used</div>
+            <div className="text-sm sm:text-base font-semibold">
+              Hybrid Power Used
+            </div>
             <div className="formula">
               {loading ? (
                 <LoadingSpinner label="Cost loading" />
@@ -45,7 +59,7 @@ export default function CostCards({
             </div>
           </div>
           <div
-            className="text-xl font-bold"
+            className="text-base sm:text-xl font-bold text-right whitespace-nowrap"
             style={{
               fontVariantNumeric: "tabular-nums",
               color: loading ? "var(--muted)" : "var(--accent)",
@@ -56,17 +70,19 @@ export default function CostCards({
         </div>
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
-            <div className="text-base font-semibold">Bypassed Power Used</div>
+            <div className="text-sm sm:text-base font-semibold">
+              Grid Power Used
+            </div>
             <div className="formula">
               {loading ? (
                 <LoadingSpinner label="Cost loading" />
               ) : (
-                formula(energy.bypass_kwh)
+                gridFormula()
               )}
             </div>
           </div>
           <div
-            className="text-xl font-bold"
+            className="text-base sm:text-xl font-bold text-right whitespace-nowrap"
             style={{
               fontVariantNumeric: "tabular-nums",
               color: loading ? "var(--muted)" : "var(--bad)",
@@ -77,7 +93,36 @@ export default function CostCards({
         </div>
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
-            <div className="text-base font-semibold">Solar Power Savings</div>
+            <div className="text-sm sm:text-base font-semibold">
+              System Loss/Gain
+            </div>
+            <div className="formula">
+              {loading ? (
+                <LoadingSpinner label="Cost loading" />
+              ) : (
+                systemLossFormula()
+              )}
+            </div>
+          </div>
+          <div
+            className="text-base sm:text-xl font-bold text-right whitespace-nowrap"
+            style={{
+              fontVariantNumeric: "tabular-nums",
+              color: loading
+                ? "var(--muted)"
+                : cost.system_loss_php < 0
+                  ? "var(--good)"
+                  : "var(--bad)",
+            }}
+          >
+            {loading ? <LoadingSpinner /> : php(cost.system_loss_php)}
+          </div>
+        </div>
+        <div className="flex items-start justify-between gap-3 w-full">
+          <div>
+            <div className="text-sm sm:text-base font-semibold">
+              Solar Power Savings
+            </div>
             <div className="formula">
               {loading ? (
                 <LoadingSpinner label="Cost loading" />
@@ -87,7 +132,7 @@ export default function CostCards({
             </div>
           </div>
           <div
-            className="text-xl font-bold"
+            className="text-base sm:text-xl font-bold text-right whitespace-nowrap"
             style={{
               color: loading
                 ? "var(--muted)"
@@ -107,13 +152,13 @@ export default function CostCards({
           </div>
         </div>
         <div
-          className="border-t pt-3 mt-1"
+          className="border-t pt-2.5 sm:pt-3 mt-1"
           style={{ borderColor: "var(--border)" }}
         >
           <div className="flex items-center justify-between gap-3 w-full">
-            <div className="text-lg font-bold">{netLabel}</div>
+            <div className="text-base sm:text-lg font-bold">{netLabel}</div>
             <div
-              className="text-3xl font-extrabold"
+              className="text-xl sm:text-3xl font-extrabold text-right whitespace-nowrap"
               style={{
                 fontVariantNumeric: "tabular-nums",
                 color: loading

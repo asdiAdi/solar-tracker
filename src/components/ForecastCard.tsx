@@ -4,6 +4,11 @@ import {
   type Forecast,
   type ForecastPeriod,
 } from "../lib/forecast";
+import {
+  billingCurrentMonthISO,
+  billingElapsedDays,
+  billingMonthLength,
+} from "../lib/date";
 import { isNA, kwhParts, php, sunH } from "../lib/format";
 import LoadingSpinner from "./LoadingSpinner";
 
@@ -13,14 +18,16 @@ function Tiles({ yieldKwh, billPhp, sunHours }: Forecast) {
   const billMissing = isNA(billPhp);
   const sunMissing = isNA(sunHours);
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+    <div className="grid grid-cols-3 gap-2 sm:gap-3 mt-3">
       <div
-        className="rounded-xl p-4 text-center"
+        className="rounded-xl p-3 sm:p-4 text-center min-w-0"
         style={{ background: "var(--chip)" }}
       >
-        <div className="text-sm font-semibold muted">Projected Yield</div>
+        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">
+          Est. Yield
+        </div>
         <div
-          className="med-number mt-1"
+          className="med-number med-number--compact mt-1"
           style={yieldMissing ? { color: "var(--bad)" } : undefined}
         >
           {y.value}
@@ -28,24 +35,28 @@ function Tiles({ yieldKwh, billPhp, sunHours }: Forecast) {
         </div>
       </div>
       <div
-        className="rounded-xl p-4 text-center"
+        className="rounded-xl p-3 sm:p-4 text-center min-w-0"
         style={{ background: "var(--chip)" }}
       >
-        <div className="text-sm font-semibold muted">Projected Bill</div>
+        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">
+          Est. Bill
+        </div>
         <div
-          className="med-number mt-1"
+          className="med-number med-number--compact mt-1"
           style={billMissing ? { color: "var(--bad)" } : undefined}
         >
           {php(billPhp)}
         </div>
       </div>
       <div
-        className="rounded-xl p-4 text-center"
+        className="rounded-xl p-3 sm:p-4 text-center min-w-0"
         style={{ background: "var(--chip)" }}
       >
-        <div className="text-sm font-semibold muted">Sun average</div>
+        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">
+          Sun avg
+        </div>
         <div
-          className="med-number mt-1"
+          className="med-number med-number--compact mt-1"
           style={sunMissing ? { color: "var(--bad)" } : undefined}
         >
           {sunH(sunHours)}
@@ -58,15 +69,20 @@ function Tiles({ yieldKwh, billPhp, sunHours }: Forecast) {
 
 function LoadingTiles() {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-      {["Projected Yield", "Projected Bill", "Sun average"].map((t) => (
+    <div className="grid grid-cols-3 gap-2 sm:gap-3 mt-3">
+      {["Est. Yield", "Est. Bill", "Sun avg"].map((t) => (
         <div
           key={t}
-          className="rounded-xl p-4 text-center"
+          className="rounded-xl p-3 sm:p-4 text-center min-w-0"
           style={{ background: "var(--chip)" }}
         >
-          <div className="text-sm font-semibold muted">{t}</div>
-          <div className="med-number mt-1" style={{ color: "var(--muted)" }}>
+          <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">
+            {t}
+          </div>
+          <div
+            className="med-number med-number--compact mt-1"
+            style={{ color: "var(--muted)" }}
+          >
             <LoadingSpinner />
           </div>
         </div>
@@ -109,7 +125,11 @@ function useForecastInputs(
     const monthBypassKwh = month?.energy.bypass_kwh ?? NaN;
 
     const now = new Date();
-    const elapsedDaysInMonth = now.getDate();
+    const billingMm = billingCurrentMonthISO();
+    const elapsedBilling = billingElapsedDays(billingMm);
+    const billingLength = billingMonthLength(billingMm);
+    const elapsedDaysInMonth =
+      elapsedBilling > 0 ? elapsedBilling : now.getDate();
     const dayOfYearNow = dayOfYear(now);
 
     const bypassDailyAvgKwh =
@@ -161,6 +181,8 @@ function useForecastInputs(
       bypassDailyAvgKwh,
       monthConsumedKwh,
       yearConsumedKwh,
+      elapsedBillingDays: elapsedBilling,
+      billingMonthLength: billingLength,
       missing,
     };
   }, [period, day, month, year]);
@@ -181,9 +203,7 @@ export default function ForecastCard({
   const inputs = useForecastInputs(period, day, month, year);
 
   const inputsLoading =
-    fetching ||
-    day == null ||
-    (period === "year" && year == null);
+    fetching || day == null || (period === "year" && year == null);
 
   useEffect(() => {
     if (inputsLoading || inputs.missing) {
@@ -207,6 +227,8 @@ export default function ForecastCard({
       monthConsumedKwh: inputs.monthConsumedKwh,
       yearConsumedKwh: inputs.yearConsumedKwh,
       elecRatePhpPerKwh: elecRate,
+      elapsedBillingDays: inputs.elapsedBillingDays,
+      billingMonthLength: inputs.billingMonthLength,
     })
       .then((f) => {
         if (live) setResult(f);

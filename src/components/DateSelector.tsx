@@ -1,13 +1,13 @@
 import { useState } from "react";
 import CalendarModal from "./CalendarModal";
 import {
-  clampDayMaxToday,
-  clampMonthMaxCurrent,
-  clampYearMaxCurrent,
-  currentMonthISO,
+  MIN_MONTH_ISO,
+  MIN_SELECTABLE_DAY_ISO,
+  MIN_YEAR,
+  billingCurrentMonthISO,
   currentYear,
+  formatBillingLabel,
   formatFullDay,
-  formatMonthLabel,
   shiftDay,
   shiftMonth,
   todayISO,
@@ -33,19 +33,23 @@ export default function DateSelector({
   const [open, setOpen] = useState(false);
 
   const btn =
-    "px-3 py-2 rounded-lg text-base font-semibold shrink-0 transition-colors";
+    "px-2 sm:px-3 py-2 rounded-lg text-sm sm:text-base font-semibold shrink-0 transition-colors";
   const ghost = { color: "var(--muted)" } as const;
 
   const label =
     period === "day"
       ? formatFullDay(day)
       : period === "month"
-        ? formatMonthLabel(month)
+        ? formatBillingLabel(month)
         : year;
 
   const atDayMax = day >= todayISO();
-  const atMonthMax = month >= currentMonthISO();
+  const atMonthMax = month >= billingCurrentMonthISO();
   const atYearMax = Number(year) >= currentYear();
+
+  const atDayMin = day <= MIN_SELECTABLE_DAY_ISO;
+  const atMonthMin = month <= MIN_MONTH_ISO;
+  const atYearMin = Number(year) <= MIN_YEAR;
 
   return (
     <>
@@ -54,8 +58,9 @@ export default function DateSelector({
           <>
             <button
               className={btn}
-              style={ghost}
+              style={{ ...ghost, opacity: atDayMin ? 0.3 : 1 }}
               onClick={() => onDay(shiftDay(day, -1))}
+              disabled={atDayMin}
               aria-label="Previous day"
             >
               ‹
@@ -68,7 +73,7 @@ export default function DateSelector({
             <button
               className={btn}
               style={{ ...ghost, opacity: atDayMax ? 0.3 : 1 }}
-              onClick={() => onDay(clampDayMaxToday(shiftDay(day, 1)))}
+              onClick={() => onDay(shiftDay(day, 1))}
               disabled={atDayMax}
               aria-label="Next day"
             >
@@ -80,8 +85,9 @@ export default function DateSelector({
           <>
             <button
               className={btn}
-              style={ghost}
+              style={{ ...ghost, opacity: atMonthMin ? 0.3 : 1 }}
               onClick={() => onMonth(shiftMonth(month, -1))}
+              disabled={atMonthMin}
               aria-label="Previous month"
             >
               ‹
@@ -94,9 +100,7 @@ export default function DateSelector({
             <button
               className={btn}
               style={{ ...ghost, opacity: atMonthMax ? 0.3 : 1 }}
-              onClick={() =>
-                onMonth(clampMonthMaxCurrent(shiftMonth(month, 1)))
-              }
+              onClick={() => onMonth(shiftMonth(month, 1))}
               disabled={atMonthMax}
               aria-label="Next month"
             >
@@ -108,8 +112,9 @@ export default function DateSelector({
           <>
             <button
               className={btn}
-              style={ghost}
+              style={{ ...ghost, opacity: atYearMin ? 0.3 : 1 }}
               onClick={() => onYear(String(Number(year) - 1))}
+              disabled={atYearMin}
               aria-label="Previous year"
             >
               ‹
@@ -122,7 +127,7 @@ export default function DateSelector({
             <button
               className={btn}
               style={{ ...ghost, opacity: atYearMax ? 0.3 : 1 }}
-              onClick={() => onYear(clampYearMaxCurrent(Number(year) + 1))}
+              onClick={() => onYear(String(Number(year) + 1))}
               disabled={atYearMax}
               aria-label="Next year"
             >
@@ -162,7 +167,7 @@ function CalendarTrigger({
       type="button"
       aria-label={ariaLabel}
       onClick={onOpen}
-      className="min-w-0 flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-base font-semibold bg-transparent outline-none cursor-pointer"
+      className="min-w-0 flex-1 flex items-center justify-center gap-2 px-2 sm:px-3 py-2 rounded-lg text-sm sm:text-base font-semibold bg-transparent outline-none cursor-pointer"
       style={{ color: "var(--text)" }}
     >
       <span className="truncate">{label}</span>

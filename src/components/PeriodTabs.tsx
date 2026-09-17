@@ -24,7 +24,7 @@ export default function PeriodTabs({
           role="tab"
           aria-selected={period === t.id}
           onClick={() => onChange(t.id)}
-          className="py-2.5 rounded-lg text-base font-semibold transition-colors"
+          className="py-2 sm:py-2.5 rounded-lg text-sm sm:text-base font-semibold transition-colors"
           style={{
             background: period === t.id ? "var(--text)" : "transparent",
             color: period === t.id ? "var(--bg)" : "var(--muted)",

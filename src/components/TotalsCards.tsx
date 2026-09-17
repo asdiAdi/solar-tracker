@@ -19,23 +19,25 @@ export default function TotalsCards({
   return (
     <section
       aria-label={`${label} energy totals`}
-      className="card p-5"
+      className="card p-4 sm:p-5"
       aria-busy={loading || undefined}
     >
       <div className="eyebrow mb-3">Energy Data</div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3">
         {items.map((i) => {
           const p = kwhParts(i.v);
           const missing = !loading && isNA(i.v);
           return (
             <div
               key={i.t}
-              className="rounded-xl p-4 text-center"
+              className="rounded-xl p-2.5 sm:p-4 text-center min-w-0"
               style={{ background: "var(--chip)" }}
             >
-              <div className="text-sm font-semibold muted">{i.t}</div>
+              <div className="text-[0.65rem] sm:text-sm font-semibold muted truncate leading-tight">
+                {i.t}
+              </div>
               <div
-                className="med-number mt-1"
+                className="med-number med-number--compact mt-1"
                 style={{
                   color: loading
                     ? "var(--muted)"

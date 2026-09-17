@@ -5,7 +5,7 @@ const envApiBase = import.meta.env.VITE_API_BASE_URL as string;
 const envApiKey = import.meta.env.VITE_X_API_KEY as string;
 
 export const CONFIG = {
-  APP_NAME: "Solar Tracker",
+  APP_NAME: "JATH Solar Tracker",
   API_BASE_URL: envApiBase.replace(/\/$/, ""),
   API_KEY: envApiKey,
 
