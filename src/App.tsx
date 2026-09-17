@@ -78,11 +78,70 @@ export default function App() {
   return Route ? <Route /> : <MainApp />;
 }
 
+const VIEW_KEY = "solar-tracker-view";
+
+type StoredView = {
+  period?: unknown;
+  day?: unknown;
+  month?: unknown;
+  year?: unknown;
+};
+
+function loadStoredView(): StoredView {
+  try {
+    const raw = localStorage.getItem(VIEW_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as StoredView;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function initialPeriod(stored: StoredView): Period {
+  return stored.period === "day" ||
+    stored.period === "month" ||
+    stored.period === "year"
+    ? stored.period
+    : "day";
+}
+
+function initialDay(stored: StoredView): string {
+  if (typeof stored.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(stored.day)) {
+    const clamped = clampDay(stored.day);
+    return clamped > todayISO() ? todayISO() : clamped;
+  }
+  return clampDay(todayISO());
+}
+
+function initialMonth(stored: StoredView): string {
+  if (
+    typeof stored.month === "string" &&
+    /^\d{4}-\d{2}$/.test(stored.month)
+  ) {
+    const clamped = clampMonth(stored.month);
+    const cur = billingCurrentMonthISO();
+    return clamped > cur ? cur : clamped;
+  }
+  return clampMonth(billingCurrentMonthISO());
+}
+
+function initialYear(stored: StoredView): string {
+  if (typeof stored.year === "string" && /^\d{4}$/.test(stored.year)) {
+    const clamped = clampYear(stored.year);
+    const cur = String(currentYear());
+    return Number(clamped) > Number(cur) ? cur : clamped;
+  }
+  return clampYear(String(currentYear()));
+}
+
 function MainApp() {
-  const [period, setPeriod] = useState<Period>("day");
-  const [day, setDay] = useState(() => clampDay(todayISO()));
-  const [month, setMonth] = useState(() => clampMonth(billingCurrentMonthISO()));
-  const [year, setYear] = useState(() => clampYear(String(currentYear())));
+  const [period, setPeriod] = useState<Period>(() =>
+    initialPeriod(loadStoredView()),
+  );
+  const [day, setDay] = useState(() => initialDay(loadStoredView()));
+  const [month, setMonth] = useState(() => initialMonth(loadStoredView()));
+  const [year, setYear] = useState(() => initialYear(loadStoredView()));
   const [data, setData] = useState<Record<string, PeriodResponse>>({});
   const [live, setLive] = useState<LiveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +151,17 @@ function MainApp() {
   useEffect(() => {
     document.documentElement.dataset.theme = getInitialTheme();
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        VIEW_KEY,
+        JSON.stringify({ v: 1, period, day, month, year }),
+      );
+    } catch {
+      // private mode / quota — non-fatal, just skip persistence
+    }
+  }, [period, day, month, year]);
 
   const dateKey = period === "day" ? day : period === "month" ? month : year;
   const cacheKey = keyFor(period, dateKey);
@@ -235,14 +305,17 @@ function MainApp() {
               disabled={refreshing}
               aria-label="Refresh data"
               title="Refresh data"
-              className="w-11 h-11 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg font-semibold shrink-0 inline-flex items-center justify-center gap-1.5 text-lg sm:text-base"
+              className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg font-medium shrink-0 inline-flex items-center justify-center gap-1.5 text-sm sm:text-base"
               style={{
-                background: "var(--chip)",
-                color: "var(--text)",
-                opacity: refreshing ? 0.6 : 1,
+                background: "transparent",
+                color: "var(--muted)",
+                opacity: refreshing ? 0.5 : 0.75,
+                border: "1px solid transparent",
               }}
             >
-              <span aria-hidden>⟳</span>
+              <span aria-hidden className="text-base leading-none">
+                ⟳
+              </span>
               <span className="hidden sm:inline text-base">
                 {refreshing ? "Refreshing…" : "Refresh"}
               </span>
