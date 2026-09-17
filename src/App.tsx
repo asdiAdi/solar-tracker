@@ -14,8 +14,7 @@ import ThemeSwitcher, { getInitialTheme } from "./components/ThemeSwitcher";
 import PeriodTabs from "./components/PeriodTabs";
 import DateSelector from "./components/DateSelector";
 import LiveCards from "./components/LiveCards";
-import BypassUpdatePage from "./components/BypassUpdatePage";
-import RateUpdatePage from "./components/RateUpdatePage";
+import MonthlyUpdatePage from "./components/MonthlyUpdatePage";
 import TotalsCards from "./components/TotalsCards";
 import CostCards from "./components/CostCards";
 // import ForecastCard from "./components/ForecastCard";
@@ -36,20 +35,20 @@ const DEFAULT_ENERGY: EnergyTotals = {
   generated_kwh: NA,
   consumed_kwh: NA,
   grid_import_kwh: NA,
-  grid_export_kwh: NA,
+  system_loss_kwh: NA,
   bypass_kwh: NA,
 };
 
 const DEFAULT_COST: CostTotals = {
   consumed_php: NA,
   bypass_php: NA,
+  system_loss_php: NA,
   solar_php: NA,
   net_php: NA,
 };
 
 const ROUTES: Record<string, React.ComponentType> = {
-  "/bypass-update": BypassUpdatePage,
-  "/rate-update": RateUpdatePage,
+  "/monthly-update": MonthlyUpdatePage,
 };
 
 const keyFor = (kind: Period, value: string) => `${kind}:${value}`;
@@ -107,7 +106,10 @@ function initialPeriod(stored: StoredView): Period {
 }
 
 function initialDay(stored: StoredView): string {
-  if (typeof stored.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(stored.day)) {
+  if (
+    typeof stored.day === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(stored.day)
+  ) {
     const clamped = clampDay(stored.day);
     return clamped > todayISO() ? todayISO() : clamped;
   }
@@ -115,10 +117,7 @@ function initialDay(stored: StoredView): string {
 }
 
 function initialMonth(stored: StoredView): string {
-  if (
-    typeof stored.month === "string" &&
-    /^\d{4}-\d{2}$/.test(stored.month)
-  ) {
+  if (typeof stored.month === "string" && /^\d{4}-\d{2}$/.test(stored.month)) {
     const clamped = clampMonth(stored.month);
     const cur = billingCurrentMonthISO();
     return clamped > cur ? cur : clamped;

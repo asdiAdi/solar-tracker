@@ -98,12 +98,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
         });
     }
     this.api.root
-      .addResource("bypass-update")
-      .addMethod("POST", new apigw.LambdaIntegration(fn), {
-        apiKeyRequired: true,
-      });
-    this.api.root
-      .addResource("rate-update")
+      .addResource("monthly-update")
       .addMethod("POST", new apigw.LambdaIntegration(fn), {
         apiKeyRequired: true,
       });

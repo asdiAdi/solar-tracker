@@ -34,10 +34,8 @@ if (!ALLOWED_ORIGINS) {
 }
 
 const TIMEZONE = "Asia/Manila";
-const ELEC_RATE_PREFIX = "elec_rate:";
-const BYPASS_PREFIX = "bypass:reading:";
-const BYPASS_UPDATE_FAILED = "bypass-update failed";
-const RATE_UPDATE_FAILED = "rate-update failed";
+const MANUAL_UPDATE_PREFIX = "manual-update:";
+const MONTHLY_UPDATE_FAILED = "monthly-update failed";
 const LIVE_TTL_SEC = 5 * 60;
 const DAY_TTL_SEC = 5 * 60;
 const MONTH_TTL_SEC = 60 * 60;
@@ -48,7 +46,6 @@ const ZERO_SOLAR: SolarTotals = {
   generated_kwh: 0,
   consumed_kwh: 0,
   grid_import_kwh: 0,
-  grid_export_kwh: 0,
 };
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -70,9 +67,8 @@ function toKeyValueMap(dataList: SolarmanDataPoint[] = []): StringMap {
 let ssmClient: SSMClient | null = null;
 let ssmCache: StringMap | null = null;
 let config: StringMap = {};
-let elecRates: ElecRate[];
-let latestElecrate: number;
-let bypassReadings: BypassReading[];
+let manualUpdates: ManualUpdate[];
+let latestManualRate: number;
 
 function getSSmClient(): SSMClient {
   if (!ssmClient) {
@@ -223,7 +219,6 @@ function sumSolar(raw: SolarmanHistoricalResponse): SolarTotals {
     generated_kwh: round1(generated),
     consumed_kwh: round1(consumed),
     grid_import_kwh: round1(gridImport),
-    grid_export_kwh: round1(gridExport),
   };
 }
 
@@ -232,7 +227,6 @@ function addSolar(a: SolarTotals, b: SolarTotals): SolarTotals {
     generated_kwh: round1(a.generated_kwh + b.generated_kwh),
     consumed_kwh: round1(a.consumed_kwh + b.consumed_kwh),
     grid_import_kwh: round1(a.grid_import_kwh + b.grid_import_kwh),
-    grid_export_kwh: round1(a.grid_export_kwh + b.grid_export_kwh),
   };
 }
 
@@ -310,30 +304,55 @@ async function loadSolarRange(
   return { solar: sumSolar(raw), ts, ttlSec };
 }
 
-// fetch list of all elec rates
-async function loadElecRates(): Promise<ElecRate[]> {
-  if (elecRates) return elecRates;
-  const rates = await scanByPrefix<ElecRate, { rate: string }>(
-    ELEC_RATE_PREFIX,
-    (pk, data) => ({
-      mm: pk.slice(ELEC_RATE_PREFIX.length),
-      rate: Number(data.rate),
-    }),
-  );
+// fetch list of all manual monthly updates (single source for rate + bypass)
+async function loadManualUpdates(): Promise<ManualUpdate[]> {
+  if (manualUpdates) return manualUpdates;
+  const updates = await scanByPrefix<
+    ManualUpdate,
+    { rate: string | number; bypass_kwh: string | number }
+  >(MANUAL_UPDATE_PREFIX, (pk, data) => {
+    const rate = Number(data?.rate);
+    const bypass_kwh = Number(data?.bypass_kwh);
+    return {
+      mm: pk.slice(MANUAL_UPDATE_PREFIX.length),
+      rate,
+      bypass_kwh,
+    };
+  });
 
-  return rates.sort((a, b) => (a.mm < b.mm ? -1 : a.mm > b.mm ? 1 : 0));
+  return updates.sort((a, b) => (a.mm < b.mm ? -1 : a.mm > b.mm ? 1 : 0));
 }
 
 function rateForMonth(mm: string): number {
-  return elecRates.find((r) => r.mm === mm)?.rate ?? latestElecrate;
+  return manualUpdates.find((r) => r.mm == mm)?.rate ?? latestManualRate;
+}
+
+function bypassKwhForMonth(mm: string): number {
+  const bypass_kwh = manualUpdates.find((r) => r.mm == mm)?.bypass_kwh;
+  if (!bypass_kwh) {
+    // get previous
+    return manualUpdates.at(-1)?.bypass_kwh!;
+  } else {
+    return bypass_kwh;
+  }
 }
 
 function avgRateForYear(yyyy: string | number): number {
-  const values = elecRates
+  const values = manualUpdates
     .filter((r) => r.mm.startsWith(`${yyyy}-`))
     .map((r) => r.rate);
 
+  if (values.length === 0) return latestManualRate;
   return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+/** Billing month YYYY-MM containing a calendar day: d<=16 -> same month, else next. */
+function billingMonthForDay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (d <= 16) return `${y}-${pad2(m)}`;
+  const dt = new Date(Date.UTC(y, m - 1, 1));
+  dt.setUTCMonth(dt.getUTCMonth() + 1);
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}`;
 }
 
 function manilaToday(): { y: number; m: number; d: number } {
@@ -403,53 +422,12 @@ function isoToDay(iso: string): number {
   return Math.floor(Date.UTC(y, m - 1, d) / 86_400_000);
 }
 
-// fetch list of all bypass,
-async function loadBypassReadings(): Promise<BypassReading[]> {
-  if (bypassReadings) return bypassReadings;
-  const readings = await scanByPrefix<
-    BypassReading,
-    { cumulative_kwh: string }
-  >(BYPASS_PREFIX, (pk, data) => ({
-    iso: pk.slice(BYPASS_PREFIX.length),
-    day: isoToDay(pk.slice(BYPASS_PREFIX.length)),
-    cum: Number(data.cumulative_kwh),
-  }));
-
-  return readings.sort((a, b) =>
-    a.day === b.day ? a.cum - b.cum : a.day - b.day,
-  );
-}
-
-function bypassKwhForRange(startIso: string, endIso: string): number {
-  const s = isoToDay(startIso);
-  const e = isoToDay(endIso);
-  if (!bypassReadings || bypassReadings.length < 2 || e < s) return 0;
-
-  // Each valid pair of readings covers days (prev.day, cur.day] at a constant rate.
-  const segs: { from: number; to: number; rate: number }[] = [];
-  for (let i = 1; i < bypassReadings.length; i++) {
-    const a = bypassReadings[i - 1];
-    const b = bypassReadings[i];
-    const span = b.day - a.day;
-    const delta = b.cum - a.cum;
-    if (span > 0 && delta > 0) {
-      segs.push({ from: a.day + 1, to: b.day, rate: delta / span });
-    }
-  }
-  if (segs.length === 0) return 0;
-
-  // Gaps (skipped pairs) inherit the preceding rate; the ends extend forever.
-  for (let i = 0; i < segs.length - 1; i++) segs[i].to = segs[i + 1].from - 1;
-  segs[0].from = -Infinity;
-  segs[segs.length - 1].to = Infinity;
-
-  let total = 0;
-  for (const { from, to, rate } of segs) {
-    const lo = Math.max(s, from);
-    const hi = Math.min(e, to);
-    if (hi >= lo) total += (hi - lo + 1) * rate;
-  }
-  return total;
+function bypassKwhForDay(iso: string): number {
+  const mm = billingMonthForDay(iso);
+  const monthly = bypassKwhForMonth(mm);
+  const { start, end } = billingWindowForMonth(mm);
+  const days = inclusiveDayCount(start, end);
+  return round1(monthly / days);
 }
 
 async function energyForDay(date: string): Promise<PeriodResult> {
@@ -469,7 +447,13 @@ async function energyForDay(date: string): Promise<PeriodResult> {
   return {
     energy: {
       ...solar,
-      bypass_kwh: round1(bypassKwhForRange(iso, iso) - solar.grid_import_kwh),
+      system_loss_kwh: round1(
+        solar.generated_kwh - solar.consumed_kwh + solar.grid_import_kwh,
+      ),
+      bypass_kwh: Math.max(
+        round1(bypassKwhForDay(iso) - solar.grid_import_kwh),
+        0,
+      ),
     },
     ts,
     ttlSec,
@@ -488,8 +472,12 @@ async function energyForMonth(month: string): Promise<PeriodResult> {
   return {
     energy: {
       ...solar,
-      bypass_kwh: round1(
-        bypassKwhForRange(info.start, info.cappedEnd) - solar.grid_import_kwh,
+      system_loss_kwh: round1(
+        solar.generated_kwh - solar.consumed_kwh + solar.grid_import_kwh,
+      ),
+      bypass_kwh: Math.max(
+        round1(bypassKwhForMonth(month) - solar.grid_import_kwh),
+        0,
       ),
     },
     ts,
@@ -535,11 +523,14 @@ async function energyForYear(year: string | number): Promise<PeriodResult> {
       info.cappedEnd,
     );
     solar = addSolar(solar, r.solar);
-    bypass_kwh += bypassKwhForRange(info.start, info.cappedEnd);
+    bypass_kwh += bypassKwhForMonth(mm);
   }
   const energy: EnergyTotals = {
     ...solar,
-    bypass_kwh: round1(bypass_kwh - solar.grid_import_kwh),
+    system_loss_kwh: round1(
+      solar.generated_kwh - solar.consumed_kwh + solar.grid_import_kwh,
+    ),
+    bypass_kwh: Math.max(round1(bypass_kwh - solar.grid_import_kwh), 0),
   };
   if (!isCurrentYear) await cacheSet(key, { energy, ts }, ttlSec);
   return { energy, ts, ttlSec };
@@ -625,7 +616,7 @@ async function handleLive(ev: LambdaEvent): Promise<APIGatewayProxyResult> {
     {
       timestamp: `${t.y}-${pad2(t.m)}-${pad2(t.d)}T00:00:00+08:00`,
       live: data,
-      elec_rate: latestElecrate,
+      elec_rate: latestManualRate,
     },
     ev,
     LIVE_TTL_SEC,
@@ -649,7 +640,13 @@ async function handleEnergyPeriod(
       ? avgRateForYear(query.year ?? manilaToday().y)
       : period === "month"
         ? rateForMonth(query.month ?? billingCurrentMonth())
-        : rateForMonth(result.ts.slice(0, 7) ?? todayIso());
+        : rateForMonth(billingMonthForDay(query.date ?? todayIso()));
+
+  const consumed_php = Math.round(result.energy.consumed_kwh * rate);
+  const bypass_php = Math.round(result.energy.bypass_kwh * rate);
+  const solar_php = Math.round(result.energy.generated_kwh * rate);
+  const system_loss_php = Math.round(result.energy.system_loss_kwh * rate);
+  const net_php = consumed_php + bypass_php + system_loss_php - solar_php;
 
   return jsonResponse(
     200,
@@ -657,16 +654,11 @@ async function handleEnergyPeriod(
       timestamp: result.ts,
       energy: result.energy,
       cost: {
-        consumed_php: Math.round(result.energy.consumed_kwh * rate),
-        bypass_php: Math.round(result.energy.bypass_kwh * rate),
-        solar_php: Math.round(result.energy.generated_kwh * rate),
-        net_php: Math.round(
-          (result.energy.consumed_kwh +
-            result.energy.bypass_kwh +
-            result.energy.grid_export_kwh -
-            result.energy.generated_kwh) *
-            rate,
-        ),
+        consumed_php,
+        bypass_php,
+        solar_php,
+        system_loss_php,
+        net_php,
       },
       elec_rate: rate,
     },
@@ -675,42 +667,7 @@ async function handleEnergyPeriod(
   );
 }
 
-async function handleBypassUpdate(
-  ev: LambdaEvent,
-): Promise<APIGatewayProxyResult> {
-  try {
-    const body = parseJsonBody(ev);
-    const cumulativeKwh = Number(body.cumulative_kwh);
-    requireValidPassword(String(body.password ?? ""));
-
-    if (!Number.isFinite(cumulativeKwh) || cumulativeKwh < 0) {
-      throw new Error("invalid cumulative_kwh");
-    }
-
-    const iso = todayIso();
-    const recordedAt = new Date().toISOString();
-    await cacheSet(
-      `${BYPASS_PREFIX}${iso}`,
-      { cumulative_kwh: cumulativeKwh, recordedAt },
-      null,
-    );
-
-    return jsonResponse(
-      200,
-      {
-        ok: true,
-        recordedAt,
-        cumulative_kwh: cumulativeKwh,
-      },
-      ev,
-    );
-  } catch (e) {
-    if (e instanceof HttpError) throw e;
-    return jsonResponse(400, { error: BYPASS_UPDATE_FAILED }, ev);
-  }
-}
-
-async function handleRateUpdate(
+async function handleMonthlyUpdate(
   ev: LambdaEvent,
 ): Promise<APIGatewayProxyResult> {
   try {
@@ -720,6 +677,9 @@ async function handleRateUpdate(
       .trim()
       .padStart(2, "0");
     const rate = Number(body.rate ?? body.elec_rate);
+    const bypass_kwh = Number(
+      body.bypass_kwh ?? body.bypassKwh ?? body.cumulative_kwh,
+    );
     requireValidPassword(String(body.password ?? ""));
 
     const monthNum = Number(month);
@@ -727,21 +687,28 @@ async function handleRateUpdate(
       /^\d{4}$/.test(year) && Number(year) >= 2000 && Number(year) <= 2100;
     const validMonth = /^\d{2}$/.test(month) && monthNum >= 1 && monthNum <= 12;
 
-    if (!validYear || !validMonth || !Number.isFinite(rate) || rate <= 0) {
-      throw new Error("invalid year/month/rate");
+    if (
+      !validYear ||
+      !validMonth ||
+      !Number.isFinite(rate) ||
+      rate <= 0 ||
+      !Number.isFinite(bypass_kwh) ||
+      bypass_kwh < 0
+    ) {
+      throw new Error("invalid year/month/rate/bypass_kwh");
     }
 
     const mm = `${year}-${month}`;
     await cacheSet(
-      `${ELEC_RATE_PREFIX}${mm}`,
-      { rate, updatedAt: new Date().toISOString() },
+      `${MANUAL_UPDATE_PREFIX}${mm}`,
+      { rate, bypass_kwh, updatedAt: new Date().toISOString() },
       null,
     );
 
-    return jsonResponse(200, { ok: true, month: mm, rate }, ev);
+    return jsonResponse(200, { ok: true, month: mm, rate, bypass_kwh }, ev);
   } catch (e) {
     if (e instanceof HttpError) throw e;
-    return jsonResponse(400, { error: RATE_UPDATE_FAILED }, ev);
+    return jsonResponse(400, { error: MONTHLY_UPDATE_FAILED }, ev);
   }
 }
 
@@ -758,9 +725,8 @@ export const handler = async (
 
   // initialize most used values
   config = await loadParams(SSM_PREFIX);
-  elecRates = await loadElecRates();
-  latestElecrate = elecRates.at(-1)!.rate;
-  bypassReadings = await loadBypassReadings();
+  manualUpdates = await loadManualUpdates();
+  latestManualRate = manualUpdates.at(-1)?.rate ?? NaN;
 
   try {
     switch (path) {
@@ -770,10 +736,8 @@ export const handler = async (
       case "month":
       case "year":
         return await handleEnergyPeriod(path, query, ev);
-      case "bypass-update":
-        return await handleBypassUpdate(ev);
-      case "rate-update":
-        return await handleRateUpdate(ev);
+      case "monthly-update":
+        return await handleMonthlyUpdate(ev);
       default:
         return jsonResponse(404, { error: "unknown route" }, ev);
     }

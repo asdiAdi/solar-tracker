@@ -1,17 +1,17 @@
 import { useState } from "react";
-import { postRateUpdate } from "../lib/api";
-import { MONTH_NAMES, MIN_MONTH_ISO, MIN_YEAR, clampMonth, clampYear, currentYear, formatBillingLabel } from "../lib/date";
+import { postMonthlyUpdate } from "../lib/api";
+import { MONTH_NAMES, currentYear, formatBillingLabel } from "../lib/date";
 
 const thisYear = currentYear();
 const YEARS = Array.from({ length: 8 }, (_, i) => String(thisYear - 5 + i));
 
-export default function RateUpdatePage() {
-  const [year, setYear] = useState(() => clampYear(String(thisYear)));
-  const [month, setMonth] = useState(() => {
-    const m = String(new Date().getMonth() + 1).padStart(2, "0");
-    return clampMonth(`${clampYear(String(thisYear))}-${m}`).slice(5, 7);
-  });
+export default function MonthlyUpdatePage() {
+  const [year, setYear] = useState(String(thisYear));
+  const [month, setMonth] = useState(() =>
+    String(new Date().getMonth() + 1).padStart(2, "0"),
+  );
   const [rate, setRate] = useState("");
+  const [bypassKwh, setBypassKwh] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
@@ -20,18 +20,35 @@ export default function RateUpdatePage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatus(null);
-    const v = Number(rate);
-    if (!Number.isFinite(v) || v <= 0) {
+    const r = Number(rate);
+    if (!Number.isFinite(r) || r <= 0) {
       setIsError(true);
       setStatus("Enter a rate in ₱/kWh greater than 0.");
       return;
     }
+    const b = Number(bypassKwh);
+    if (!Number.isFinite(b) || b < 0) {
+      setIsError(true);
+      setStatus("Enter a bypass kWh value >= 0.");
+      return;
+    }
+    if (!/^\d{4}$/.test(year) || Number(year) < 2000 || Number(year) > 2100) {
+      setIsError(true);
+      setStatus("Enter a valid year between 2000 and 2100.");
+      return;
+    }
+    if (!/^\d{2}$/.test(month) || Number(month) < 1 || Number(month) > 12) {
+      setIsError(true);
+      setStatus("Enter a valid month.");
+      return;
+    }
     setSending(true);
     try {
-      const r = await postRateUpdate(year, month, v, password);
+      const res = await postMonthlyUpdate(year, month, r, b, password);
       setIsError(false);
-      setStatus(`Saved ₱${r.rate}/kWh for ${r.month}.`);
+      setStatus(`Saved ₱${res.rate}/kWh + ${res.bypass_kwh}kWh for ${res.month}.`);
       setRate("");
+      setBypassKwh("");
       setPassword("");
     } catch (err) {
       setIsError(true);
@@ -55,38 +72,31 @@ export default function RateUpdatePage() {
       <div className="max-w-2xl mx-auto px-4 pb-12 flex flex-col gap-4">
         <header className="pt-5">
           <h1 className="text-xl font-bold tracking-tight leading-none">
-            Electricity Rate Update
+            Monthly Update
           </h1>
           <p className="text-sm mt-2" style={{ color: "var(--muted)" }}>
-            Billing period: rate for {formatBillingLabel(`${year}-${month}`)}.
-            Saving overwrites the existing rate for that billing month; missing
-            months fall back to the latest rate.
+            Billing period: rate + bypass for{" "}
+            {formatBillingLabel(`${year}-${month}`)}. Saving overwrites the
+            existing entry for that billing month.
           </p>
         </header>
         <form
           onSubmit={onSubmit}
           className="card p-5 flex flex-col gap-4"
-          aria-label="Electricity rate update form"
+          aria-label="Monthly update form"
         >
           <div className="grid grid-cols-2 gap-3">
             <label className="flex flex-col gap-1.5">
               <span className="text-base font-semibold">Year</span>
               <select
                 value={year}
-                onChange={(e) => {
-                  const ny = clampYear(e.target.value);
-                  setYear(ny);
-                  if (ny === String(MIN_YEAR)) {
-                    const minMm = MIN_MONTH_ISO.slice(5, 7);
-                    if (month < minMm) setMonth(minMm);
-                  }
-                }}
+                onChange={(e) => setYear(e.target.value)}
                 className="px-3 py-2 rounded-lg"
                 style={inputStyle}
                 required
               >
                 {YEARS.map((y) => (
-                  <option key={y} value={y} disabled={Number(y) < MIN_YEAR}>
+                  <option key={y} value={y}>
                     {y}
                   </option>
                 ))}
@@ -103,11 +113,8 @@ export default function RateUpdatePage() {
               >
                 {MONTH_NAMES.map((name, i) => {
                   const mm = String(i + 1).padStart(2, "0");
-                  const disabled =
-                    year === String(MIN_YEAR) &&
-                    `${year}-${mm}` < MIN_MONTH_ISO;
                   return (
-                    <option key={mm} value={mm} disabled={disabled}>
+                    <option key={mm} value={mm}>
                       {name}
                     </option>
                   );
@@ -127,6 +134,23 @@ export default function RateUpdatePage() {
               className="px-3 py-2 rounded-lg"
               style={inputStyle}
               placeholder="e.g. 13.50"
+              required
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-base font-semibold">
+              Bypass kWh for billing window
+            </span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              value={bypassKwh}
+              onChange={(e) => setBypassKwh(e.target.value)}
+              className="px-3 py-2 rounded-lg"
+              style={inputStyle}
+              placeholder="e.g. 42.5"
               required
             />
           </label>
@@ -151,7 +175,7 @@ export default function RateUpdatePage() {
               opacity: sending ? 0.6 : 1,
             }}
           >
-            {sending ? "Saving…" : `Save rate for ${year}-${month}`}
+            {sending ? "Saving…" : `Save for ${year}-${month}`}
           </button>
           {status && (
             <div

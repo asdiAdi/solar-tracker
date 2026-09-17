@@ -25,9 +25,15 @@ export default function CostCards({
   };
   const gridFormula = () => {
     if (loading) return null;
-    if (isNA(energy.bypass_kwh) || isNA(energy.grid_import_kwh)) return "N/A";
-    return `${energy.grid_import_kwh}kWh + ${energy.bypass_kwh.toFixed(1)}kWh × ₱${elecRate.toFixed(2)}/kWh`;
+    if (isNA(energy.bypass_kwh)) return "N/A";
+    return `${energy.bypass_kwh.toFixed(1)}kWh × ₱${elecRate.toFixed(2)}/kWh`;
   };
+  const systemLossFormula = () => {
+    if (loading) return null;
+    if (isNA(energy.system_loss_kwh)) return "N/A";
+    return `${Math.abs(Number(energy.system_loss_kwh.toFixed(1)))}kWh × ₱${elecRate.toFixed(2)}/kWh`;
+  };
+
   const solarMissing = !loading && isNA(cost.solar_php);
   const netMissing = !loading && isNA(cost.net_php);
 
@@ -83,6 +89,33 @@ export default function CostCards({
             }}
           >
             {loading ? <LoadingSpinner /> : php(cost.bypass_php)}
+          </div>
+        </div>
+        <div className="flex items-start justify-between gap-3 w-full">
+          <div>
+            <div className="text-sm sm:text-base font-semibold">
+              System Loss/Gain
+            </div>
+            <div className="formula">
+              {loading ? (
+                <LoadingSpinner label="Cost loading" />
+              ) : (
+                systemLossFormula()
+              )}
+            </div>
+          </div>
+          <div
+            className="text-base sm:text-xl font-bold text-right whitespace-nowrap"
+            style={{
+              fontVariantNumeric: "tabular-nums",
+              color: loading
+                ? "var(--muted)"
+                : cost.system_loss_php < 0
+                  ? "var(--good)"
+                  : "var(--bad)",
+            }}
+          >
+            {loading ? <LoadingSpinner /> : php(cost.system_loss_php)}
           </div>
         </div>
         <div className="flex items-start justify-between gap-3 w-full">
