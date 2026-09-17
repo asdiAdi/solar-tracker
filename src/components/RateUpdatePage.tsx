@@ -1,15 +1,16 @@
 import { useState } from "react";
 import { postRateUpdate } from "../lib/api";
-import { MONTH_NAMES, currentYear, formatBillingLabel } from "../lib/date";
+import { MONTH_NAMES, MIN_MONTH_ISO, MIN_YEAR, clampMonth, clampYear, currentYear, formatBillingLabel } from "../lib/date";
 
 const thisYear = currentYear();
 const YEARS = Array.from({ length: 8 }, (_, i) => String(thisYear - 5 + i));
 
 export default function RateUpdatePage() {
-  const [year, setYear] = useState(String(thisYear));
-  const [month, setMonth] = useState(
-    String(new Date().getMonth() + 1).padStart(2, "0"),
-  );
+  const [year, setYear] = useState(() => clampYear(String(thisYear)));
+  const [month, setMonth] = useState(() => {
+    const m = String(new Date().getMonth() + 1).padStart(2, "0");
+    return clampMonth(`${clampYear(String(thisYear))}-${m}`).slice(5, 7);
+  });
   const [rate, setRate] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -72,13 +73,20 @@ export default function RateUpdatePage() {
               <span className="text-base font-semibold">Year</span>
               <select
                 value={year}
-                onChange={(e) => setYear(e.target.value)}
+                onChange={(e) => {
+                  const ny = clampYear(e.target.value);
+                  setYear(ny);
+                  if (ny === String(MIN_YEAR)) {
+                    const minMm = MIN_MONTH_ISO.slice(5, 7);
+                    if (month < minMm) setMonth(minMm);
+                  }
+                }}
                 className="px-3 py-2 rounded-lg"
                 style={inputStyle}
                 required
               >
                 {YEARS.map((y) => (
-                  <option key={y} value={y}>
+                  <option key={y} value={y} disabled={Number(y) < MIN_YEAR}>
                     {y}
                   </option>
                 ))}
@@ -95,8 +103,11 @@ export default function RateUpdatePage() {
               >
                 {MONTH_NAMES.map((name, i) => {
                   const mm = String(i + 1).padStart(2, "0");
+                  const disabled =
+                    year === String(MIN_YEAR) &&
+                    `${year}-${mm}` < MIN_MONTH_ISO;
                   return (
-                    <option key={mm} value={mm}>
+                    <option key={mm} value={mm} disabled={disabled}>
                       {name}
                     </option>
                   );

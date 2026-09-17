@@ -3,6 +3,9 @@ import { CONFIG } from "./config";
 import { getLive, getPeriod } from "./lib/api";
 import {
   billingCurrentMonthISO,
+  clampDay,
+  clampMonth,
+  clampYear,
   currentYear,
   formatBillingLabel,
   todayISO,
@@ -77,9 +80,9 @@ export default function App() {
 
 function MainApp() {
   const [period, setPeriod] = useState<Period>("day");
-  const [day, setDay] = useState(todayISO());
-  const [month, setMonth] = useState(billingCurrentMonthISO());
-  const [year, setYear] = useState(String(currentYear()));
+  const [day, setDay] = useState(() => clampDay(todayISO()));
+  const [month, setMonth] = useState(() => clampMonth(billingCurrentMonthISO()));
+  const [year, setYear] = useState(() => clampYear(String(currentYear())));
   const [data, setData] = useState<Record<string, PeriodResponse>>({});
   const [live, setLive] = useState<LiveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);

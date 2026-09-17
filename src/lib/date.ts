@@ -29,6 +29,37 @@ export function currentYear(): number {
   return new Date().getFullYear();
 }
 
+/** Minimum selectable date: everything <= MIN_DAY_ISO is disabled. */
+export const MIN_DAY_ISO = "2026-05-01";
+export const MIN_MONTH_ISO = "2026-05";
+export const MIN_YEAR = 2026;
+/** First selectable day (MIN_DAY_ISO itself is disabled). */
+export const MIN_SELECTABLE_DAY_ISO = "2026-05-02";
+
+export function isDayDisabled(iso: string): boolean {
+  return iso <= MIN_DAY_ISO;
+}
+
+export function isMonthDisabled(ym: string): boolean {
+  return ym < MIN_MONTH_ISO;
+}
+
+export function isYearDisabled(y: number | string): boolean {
+  return Number(y) < MIN_YEAR;
+}
+
+export function clampDay(iso: string): string {
+  return isDayDisabled(iso) ? MIN_SELECTABLE_DAY_ISO : iso;
+}
+
+export function clampMonth(ym: string): string {
+  return isMonthDisabled(ym) ? MIN_MONTH_ISO : ym;
+}
+
+export function clampYear(y: string): string {
+  return isYearDisabled(y) ? String(MIN_YEAR) : y;
+}
+
 export function parseDay(iso: string): { y: number; m: number; d: number } {
   const [y, m, d] = iso.split("-").map(Number);
   return { y, m, d };

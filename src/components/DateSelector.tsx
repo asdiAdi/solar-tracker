@@ -1,6 +1,9 @@
 import { useState } from "react";
 import CalendarModal from "./CalendarModal";
 import {
+  MIN_MONTH_ISO,
+  MIN_SELECTABLE_DAY_ISO,
+  MIN_YEAR,
   billingCurrentMonthISO,
   currentYear,
   formatBillingLabel,
@@ -44,6 +47,10 @@ export default function DateSelector({
   const atMonthMax = month >= billingCurrentMonthISO();
   const atYearMax = Number(year) >= currentYear();
 
+  const atDayMin = day <= MIN_SELECTABLE_DAY_ISO;
+  const atMonthMin = month <= MIN_MONTH_ISO;
+  const atYearMin = Number(year) <= MIN_YEAR;
+
   return (
     <>
       <div className="seg flex justify-between items-center p-1 w-full">
@@ -51,8 +58,9 @@ export default function DateSelector({
           <>
             <button
               className={btn}
-              style={ghost}
+              style={{ ...ghost, opacity: atDayMin ? 0.3 : 1 }}
               onClick={() => onDay(shiftDay(day, -1))}
+              disabled={atDayMin}
               aria-label="Previous day"
             >
               ‹
@@ -77,8 +85,9 @@ export default function DateSelector({
           <>
             <button
               className={btn}
-              style={ghost}
+              style={{ ...ghost, opacity: atMonthMin ? 0.3 : 1 }}
               onClick={() => onMonth(shiftMonth(month, -1))}
+              disabled={atMonthMin}
               aria-label="Previous month"
             >
               ‹
@@ -103,8 +112,9 @@ export default function DateSelector({
           <>
             <button
               className={btn}
-              style={ghost}
+              style={{ ...ghost, opacity: atYearMin ? 0.3 : 1 }}
               onClick={() => onYear(String(Number(year) - 1))}
+              disabled={atYearMin}
               aria-label="Previous year"
             >
               ‹
