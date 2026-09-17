@@ -467,7 +467,10 @@ async function energyForDay(date: string): Promise<PeriodResult> {
     iso,
   );
   return {
-    energy: { ...solar, bypass_kwh: round1(bypassKwhForRange(iso, iso)) },
+    energy: {
+      ...solar,
+      bypass_kwh: round1(bypassKwhForRange(iso, iso) - solar.grid_import_kwh),
+    },
     ts,
     ttlSec,
   };
@@ -485,7 +488,9 @@ async function energyForMonth(month: string): Promise<PeriodResult> {
   return {
     energy: {
       ...solar,
-      bypass_kwh: round1(bypassKwhForRange(info.start, info.cappedEnd)),
+      bypass_kwh: round1(
+        bypassKwhForRange(info.start, info.cappedEnd) - solar.grid_import_kwh,
+      ),
     },
     ts,
     ttlSec,
@@ -534,7 +539,7 @@ async function energyForYear(year: string | number): Promise<PeriodResult> {
   }
   const energy: EnergyTotals = {
     ...solar,
-    bypass_kwh,
+    bypass_kwh: round1(bypass_kwh - solar.grid_import_kwh),
   };
   if (!isCurrentYear) await cacheSet(key, { energy, ts }, ttlSec);
   return { energy, ts, ttlSec };
@@ -659,7 +664,6 @@ async function handleEnergyPeriod(
           (result.energy.consumed_kwh +
             result.energy.bypass_kwh +
             result.energy.grid_export_kwh -
-            result.energy.grid_import_kwh -
             result.energy.generated_kwh) *
             rate,
         ),
