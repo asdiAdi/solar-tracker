@@ -336,24 +336,6 @@ function avgRateForYear(yyyy: string | number): number {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-function costFor(energy: EnergyTotals, rate: number): CostBreakdown {
-  const bypassNetKwh = Math.max(
-    0,
-    round1(energy.bypass_kwh - energy.grid_import_kwh),
-  );
-  const consumed_php = Math.round(energy.consumed_kwh * rate);
-  const bypass_php = Math.round(bypassNetKwh * rate);
-  const solar_php = Math.round(energy.generated_kwh * rate);
-
-  return {
-    consumed_php,
-    bypass_php,
-    solar_php,
-    net_php: consumed_php + bypass_php - solar_php,
-    rate_php_per_kwh: rate,
-  };
-}
-
 function manilaToday(): { y: number; m: number; d: number } {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: TIMEZONE,
@@ -485,7 +467,7 @@ async function energyForDay(date: string): Promise<PeriodResult> {
     iso,
   );
   return {
-    energy: { ...solar, bypass_kwh: bypassKwhForRange(iso, iso) },
+    energy: { ...solar, bypass_kwh: round1(bypassKwhForRange(iso, iso)) },
     ts,
     ttlSec,
   };
@@ -669,7 +651,17 @@ async function handleEnergyPeriod(
     {
       timestamp: result.ts,
       energy: result.energy,
-      cost: costFor(result.energy, rate),
+      cost: {
+        consumed_php: Math.round(result.energy.consumed_kwh * rate),
+        bypass_php: Math.round(result.energy.bypass_kwh * rate),
+        solar_php: Math.round(result.energy.generated_kwh * rate),
+        net_php: Math.round(
+          (result.energy.consumed_kwh +
+            result.energy.bypass_kwh -
+            result.energy.generated_kwh) *
+            rate,
+        ),
+      },
       elec_rate: rate,
     },
     ev,

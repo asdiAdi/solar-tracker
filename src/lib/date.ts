@@ -73,17 +73,10 @@ export function billingWindowForMonth(ym: string): {
   return { start, end };
 }
 
-/** Billing mm containing a given day: d<=16 -> that month, else next month. */
-export function billingMonthForDay(isoDay: string): string {
-  const { y, m, d } = parseDay(isoDay);
-  if (d <= 16) return toMonthISO(y, m);
-  const dt = new Date(y, m, 1);
-  return toMonthISO(dt.getFullYear(), dt.getMonth() + 1);
-}
-
 /** Current billing month (window containing today). */
 export function billingCurrentMonthISO(): string {
-  return billingMonthForDay(todayISO());
+  const { y, m } = parseDay(todayISO());
+  return toMonthISO(y, m);
 }
 
 /** "Aug 17 - Sep 16 2026" — range-only billing label. */
@@ -98,8 +91,7 @@ export function formatBillingLabel(ym: string): string {
 export function inclusiveDayCount(start: string, end: string): number {
   const s = parseDay(start);
   const e = parseDay(end);
-  const ms =
-    Date.UTC(e.y, e.m - 1, e.d) - Date.UTC(s.y, s.m - 1, s.d);
+  const ms = Date.UTC(e.y, e.m - 1, e.d) - Date.UTC(s.y, s.m - 1, s.d);
   return Math.round(ms / 86400000) + 1;
 }
 
@@ -110,7 +102,10 @@ export function billingMonthLength(ym: string): number {
 }
 
 /** Elapsed billing days capped at today. */
-export function billingElapsedDays(ym: string, today: string = todayISO()): number {
+export function billingElapsedDays(
+  ym: string,
+  today: string = todayISO(),
+): number {
   const { start, end } = billingWindowForMonth(ym);
   const cappedEnd = end < today ? end : today;
   return inclusiveDayCount(start, cappedEnd);

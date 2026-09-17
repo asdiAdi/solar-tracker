@@ -27,7 +27,7 @@ export default function CostCards({
     if (isNA(energy.bypass_kwh) || isNA(energy.grid_import_kwh)) return "N/A";
     if (typeof rate !== "number" || !Number.isFinite(rate))
       return `${energy.bypass_kwh.toFixed(1)} kWh`;
-    return `${energy.bypass_kwh.toFixed(1)} − ${energy.grid_import_kwh.toFixed(1)} kWh × ₱${rate.toFixed(2)}/kWh`;
+    return `${energy.bypass_kwh.toFixed(1)} × ₱${rate.toFixed(2)}/kWh`;
   };
   const solarMissing = !loading && isNA(cost.solar_php);
   const netMissing = !loading && isNA(cost.net_php);

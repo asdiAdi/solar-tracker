@@ -34,14 +34,6 @@ interface EnergyTotals {
   bypass_kwh: number;
 }
 
-interface CostBreakdown {
-  consumed_php: number;
-  bypass_php: number;
-  solar_php: number;
-  net_php: number;
-  rate_php_per_kwh: number | null;
-}
-
 interface ElecRate {
   mm: string;
   rate: number;
