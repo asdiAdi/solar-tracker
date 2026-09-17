@@ -349,7 +349,7 @@ function costFor(energy: EnergyTotals, rate: number): CostBreakdown {
     consumed_php,
     bypass_php,
     solar_php,
-    net_php: consumed_php + bypass_php,
+    net_php: consumed_php + bypass_php - solar_php,
     rate_php_per_kwh: rate,
   };
 }
