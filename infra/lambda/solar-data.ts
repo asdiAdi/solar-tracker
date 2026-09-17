@@ -349,7 +349,7 @@ function costFor(energy: EnergyTotals, rate: number): CostBreakdown {
     consumed_php,
     bypass_php,
     solar_php,
-    net_php: consumed_php + bypass_php - solar_php,
+    net_php: consumed_php + bypass_php,
     rate_php_per_kwh: rate,
   };
 }
@@ -503,7 +503,7 @@ async function energyForMonth(month: string): Promise<PeriodResult> {
   return {
     energy: {
       ...solar,
-      bypass_kwh: bypassKwhForRange(info.start, info.cappedEnd),
+      bypass_kwh: round1(bypassKwhForRange(info.start, info.cappedEnd)),
     },
     ts,
     ttlSec,
@@ -615,7 +615,7 @@ async function handleLive(ev: LambdaEvent): Promise<APIGatewayProxyResult> {
   if (cached) {
     body = cached;
   } else {
-    body = await solarmanPost("device/v1,0/currentData", {
+    body = await solarmanPost("device/v1.0/currentData", {
       deviceSn: getParam("DEVICE_SN"),
     });
     await cacheSet("live", body, LIVE_TTL_SEC);
@@ -650,20 +650,6 @@ async function handleEnergyPeriod(
   query: Record<string, string | undefined>,
   ev: LambdaEvent,
 ): Promise<APIGatewayProxyResult> {
-  const today = todayIso();
-  if (period === "day" && (query.date ?? today) > today)
-    return jsonResponse(400, { error: "future date" }, ev);
-  if (
-    period === "month" &&
-    (query.month ?? billingCurrentMonth()) > billingCurrentMonth()
-  )
-    return jsonResponse(400, { error: "future month" }, ev);
-  if (
-    period === "year" &&
-    Number(query.year ?? manilaToday().y) > manilaToday().y
-  )
-    return jsonResponse(400, { error: "future year" }, ev);
-
   const result =
     period === "day"
       ? await energyForDay(query.date ?? todayIso())
