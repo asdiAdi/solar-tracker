@@ -20,15 +20,13 @@ export default function CostCards({
     if (loading) return null;
     if (isNA(v)) return "N/A";
     if (typeof elecRate !== "number" || !Number.isFinite(elecRate))
-      return `${v.toFixed(1)} kWh`;
-    return `${v.toFixed(1)} kWh × ₱${elecRate.toFixed(2)}/kWh`;
+      return `${v.toFixed(1)}kWh`;
+    return `${v.toFixed(1)}kWh × ₱${elecRate.toFixed(2)}/kWh`;
   };
-  const bypassFormula = () => {
+  const gridFormula = () => {
     if (loading) return null;
     if (isNA(energy.bypass_kwh) || isNA(energy.grid_import_kwh)) return "N/A";
-    if (typeof elecRate !== "number" || !Number.isFinite(elecRate))
-      return `${energy.bypass_kwh.toFixed(1)} kWh`;
-    return `${energy.bypass_kwh.toFixed(1)} × ₱${elecRate.toFixed(2)}/kWh`;
+    return `${energy.grid_import_kwh}kWh + ${energy.bypass_kwh.toFixed(1)}kWh × ₱${elecRate.toFixed(2)}/kWh`;
   };
   const solarMissing = !loading && isNA(cost.solar_php);
   const netMissing = !loading && isNA(cost.net_php);
@@ -67,13 +65,13 @@ export default function CostCards({
         <div className="flex items-start justify-between gap-3 w-full">
           <div>
             <div className="text-sm sm:text-base font-semibold">
-              Bypassed Power Used
+              Grid Power Used
             </div>
             <div className="formula">
               {loading ? (
                 <LoadingSpinner label="Cost loading" />
               ) : (
-                bypassFormula()
+                gridFormula()
               )}
             </div>
           </div>

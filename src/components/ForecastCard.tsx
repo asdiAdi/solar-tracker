@@ -4,8 +4,11 @@ import {
   type Forecast,
   type ForecastPeriod,
 } from "../lib/forecast";
-import { billingCurrentMonthISO, billingElapsedDays, billingMonthLength } from "../lib/date";
-import { netBypassKwh } from "../lib/energy";
+import {
+  billingCurrentMonthISO,
+  billingElapsedDays,
+  billingMonthLength,
+} from "../lib/date";
 import { isNA, kwhParts, php, sunH } from "../lib/format";
 import LoadingSpinner from "./LoadingSpinner";
 
@@ -20,7 +23,9 @@ function Tiles({ yieldKwh, billPhp, sunHours }: Forecast) {
         className="rounded-xl p-3 sm:p-4 text-center min-w-0"
         style={{ background: "var(--chip)" }}
       >
-        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">Est. Yield</div>
+        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">
+          Est. Yield
+        </div>
         <div
           className="med-number med-number--compact mt-1"
           style={yieldMissing ? { color: "var(--bad)" } : undefined}
@@ -33,7 +38,9 @@ function Tiles({ yieldKwh, billPhp, sunHours }: Forecast) {
         className="rounded-xl p-3 sm:p-4 text-center min-w-0"
         style={{ background: "var(--chip)" }}
       >
-        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">Est. Bill</div>
+        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">
+          Est. Bill
+        </div>
         <div
           className="med-number med-number--compact mt-1"
           style={billMissing ? { color: "var(--bad)" } : undefined}
@@ -45,7 +52,9 @@ function Tiles({ yieldKwh, billPhp, sunHours }: Forecast) {
         className="rounded-xl p-3 sm:p-4 text-center min-w-0"
         style={{ background: "var(--chip)" }}
       >
-        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">Sun avg</div>
+        <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">
+          Sun avg
+        </div>
         <div
           className="med-number med-number--compact mt-1"
           style={sunMissing ? { color: "var(--bad)" } : undefined}
@@ -67,8 +76,13 @@ function LoadingTiles() {
           className="rounded-xl p-3 sm:p-4 text-center min-w-0"
           style={{ background: "var(--chip)" }}
         >
-          <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">{t}</div>
-          <div className="med-number med-number--compact mt-1" style={{ color: "var(--muted)" }}>
+          <div className="text-[0.65rem] sm:text-sm font-semibold muted leading-tight text-center text-balance">
+            {t}
+          </div>
+          <div
+            className="med-number med-number--compact mt-1"
+            style={{ color: "var(--muted)" }}
+          >
             <LoadingSpinner />
           </div>
         </div>
@@ -108,13 +122,14 @@ function useForecastInputs(
     const monthConsumedKwh = month?.energy.consumed_kwh ?? NaN;
     const yearSolarKwh = year?.energy.generated_kwh ?? NaN;
     const yearConsumedKwh = year?.energy.consumed_kwh ?? NaN;
-    const monthBypassKwh = month ? netBypassKwh(month.energy) : NaN;
+    const monthBypassKwh = month?.energy.bypass_kwh ?? NaN;
 
     const now = new Date();
     const billingMm = billingCurrentMonthISO();
     const elapsedBilling = billingElapsedDays(billingMm);
     const billingLength = billingMonthLength(billingMm);
-    const elapsedDaysInMonth = elapsedBilling > 0 ? elapsedBilling : now.getDate();
+    const elapsedDaysInMonth =
+      elapsedBilling > 0 ? elapsedBilling : now.getDate();
     const dayOfYearNow = dayOfYear(now);
 
     const bypassDailyAvgKwh =
@@ -188,9 +203,7 @@ export default function ForecastCard({
   const inputs = useForecastInputs(period, day, month, year);
 
   const inputsLoading =
-    fetching ||
-    day == null ||
-    (period === "year" && year == null);
+    fetching || day == null || (period === "year" && year == null);
 
   useEffect(() => {
     if (inputsLoading || inputs.missing) {

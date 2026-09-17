@@ -1,5 +1,4 @@
 import { isNA, kwhParts } from "../lib/format";
-import { netBypassKwh } from "../lib/energy";
 import LoadingSpinner from "./LoadingSpinner";
 
 export default function TotalsCards({
@@ -15,7 +14,7 @@ export default function TotalsCards({
     { t: "Generated", v: energy.generated_kwh, tone: "var(--good)" },
     { t: "Consumed", v: energy.consumed_kwh, tone: "var(--accent)" },
     { t: "Imported", v: energy.grid_import_kwh, tone: "var(--warn)" },
-    { t: "Bypassed", v: netBypassKwh(energy), tone: "var(--bad)" },
+    { t: "Bypassed", v: energy.bypass_kwh, tone: "var(--bad)" },
   ];
   return (
     <section
@@ -34,7 +33,9 @@ export default function TotalsCards({
               className="rounded-xl p-2.5 sm:p-4 text-center min-w-0"
               style={{ background: "var(--chip)" }}
             >
-              <div className="text-[0.65rem] sm:text-sm font-semibold muted truncate leading-tight">{i.t}</div>
+              <div className="text-[0.65rem] sm:text-sm font-semibold muted truncate leading-tight">
+                {i.t}
+              </div>
               <div
                 className="med-number med-number--compact mt-1"
                 style={{
