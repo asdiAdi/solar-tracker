@@ -11,12 +11,12 @@ interface EnergyTotals {
   consumed_kwh: number;
   grid_import_kwh: number;
   system_loss_kwh: number;
-  bypass_kwh: number;
+  bypass_kwh: number | null;
 }
 
 interface CostTotals {
   consumed_php: number;
-  bypass_php: number;
+  bypass_php: number | null;
   solar_php: number;
   system_loss_php: number;
   net_php: number;

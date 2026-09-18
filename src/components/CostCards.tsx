@@ -25,7 +25,7 @@ export default function CostCards({
   };
   const gridFormula = () => {
     if (loading) return null;
-    if (isNA(energy.bypass_kwh)) return "N/A";
+    if (energy.bypass_kwh == null || isNA(energy.bypass_kwh)) return "N/A";
     return `${energy.bypass_kwh.toFixed(1)}kWh × ₱${elecRate.toFixed(2)}/kWh`;
   };
   const systemLossFormula = () => {
@@ -36,6 +36,7 @@ export default function CostCards({
 
   const solarMissing = !loading && isNA(cost.solar_php);
   const netMissing = !loading && isNA(cost.net_php);
+  const bypassMissing = !loading && isNA(energy.bypass_kwh);
 
   return (
     <section
@@ -156,7 +157,12 @@ export default function CostCards({
           style={{ borderColor: "var(--border)" }}
         >
           <div className="flex items-center justify-between gap-3 w-full">
-            <div className="text-base sm:text-lg font-bold">{netLabel}</div>
+            <div className="text-base sm:text-lg font-bold">
+              {netLabel}
+              {bypassMissing && (
+                <span className="formula ml-2">excl. bypass</span>
+              )}
+            </div>
             <div
               className="text-xl sm:text-3xl font-extrabold text-right whitespace-nowrap"
               style={{

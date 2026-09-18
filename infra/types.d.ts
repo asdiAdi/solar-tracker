@@ -30,7 +30,7 @@ interface EnergyTotals {
   consumed_kwh: number;
   grid_import_kwh: number;
   system_loss_kwh: number;
-  bypass_kwh: number;
+  bypass_kwh: number | null;
 }
 
 interface ManualUpdate {
@@ -43,6 +43,19 @@ interface PeriodResult {
   energy: EnergyTotals;
   ts: string;
   ttlSec: number | null;
+}
+
+interface CostTotals {
+  consumed_php: number;
+  bypass_php: number | null;
+  solar_php: number;
+  system_loss_php: number;
+  net_php: number;
+}
+
+interface YearResult extends PeriodResult {
+  cost: CostTotals;
+  elec_rate: null;
 }
 
 interface CacheRecord<T> {

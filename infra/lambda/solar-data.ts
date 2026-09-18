@@ -327,23 +327,9 @@ function rateForMonth(mm: string): number {
   return manualUpdates.find((r) => r.mm == mm)?.rate ?? latestManualRate;
 }
 
-function bypassKwhForMonth(mm: string): number {
-  const bypass_kwh = manualUpdates.find((r) => r.mm == mm)?.bypass_kwh;
-  if (!bypass_kwh) {
-    // get previous
-    return manualUpdates.at(-1)?.bypass_kwh!;
-  } else {
-    return bypass_kwh;
-  }
-}
-
-function avgRateForYear(yyyy: string | number): number {
-  const values = manualUpdates
-    .filter((r) => r.mm.startsWith(`${yyyy}-`))
-    .map((r) => r.rate);
-
-  if (values.length === 0) return latestManualRate;
-  return values.reduce((a, b) => a + b, 0) / values.length;
+function bypassKwhForMonth(mm: string): number | null {
+  const v = manualUpdates.find((r) => r.mm == mm)?.bypass_kwh;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 /** Billing month YYYY-MM containing a calendar day: d<=16 -> same month, else next. */
@@ -422,9 +408,10 @@ function isoToDay(iso: string): number {
   return Math.floor(Date.UTC(y, m - 1, d) / 86_400_000);
 }
 
-function bypassKwhForDay(iso: string): number {
+function bypassKwhForDay(iso: string): number | null {
   const mm = billingMonthForDay(iso);
   const monthly = bypassKwhForMonth(mm);
+  if (monthly == null) return null;
   const { start, end } = billingWindowForMonth(mm);
   const days = inclusiveDayCount(start, end);
   return round1(monthly / days);
@@ -444,16 +431,17 @@ async function energyForDay(date: string): Promise<PeriodResult> {
     iso,
     iso,
   );
+  const dailyBypass = bypassKwhForDay(iso);
   return {
     energy: {
       ...solar,
       system_loss_kwh: round1(
         solar.generated_kwh - solar.consumed_kwh + solar.grid_import_kwh,
       ),
-      bypass_kwh: Math.max(
-        round1(bypassKwhForDay(iso) - solar.grid_import_kwh),
-        0,
-      ),
+      bypass_kwh:
+        dailyBypass == null
+          ? null
+          : Math.max(round1(dailyBypass - solar.grid_import_kwh), 0),
     },
     ts,
     ttlSec,
@@ -469,16 +457,17 @@ async function energyForMonth(month: string): Promise<PeriodResult> {
     info.start,
     info.cappedEnd,
   );
+  const monthlyBypass = bypassKwhForMonth(month);
   return {
     energy: {
       ...solar,
       system_loss_kwh: round1(
         solar.generated_kwh - solar.consumed_kwh + solar.grid_import_kwh,
       ),
-      bypass_kwh: Math.max(
-        round1(bypassKwhForMonth(month) - solar.grid_import_kwh),
-        0,
-      ),
+      bypass_kwh:
+        monthlyBypass == null
+          ? null
+          : Math.max(round1(monthlyBypass - solar.grid_import_kwh), 0),
     },
     ts,
     ttlSec,
@@ -496,24 +485,45 @@ function billingYearContainsToday(y: number, today: string): boolean {
   });
 }
 
-async function energyForYear(year: string | number): Promise<PeriodResult> {
+async function energyAndCostForYear(
+  year: string | number,
+): Promise<YearResult> {
   const y = Number(year);
-  const key = `year:${y}`;
+  const key = `year:${y}:v2`;
   const ts = `${y}-12-16T00:00:00+08:00`;
   const today = todayIso();
   const isCurrentYear = billingYearContainsToday(y, today);
   const ttlSec = isCurrentYear ? YEAR_TTL_SEC : null;
 
   if (!isCurrentYear) {
-    const cached = await cacheGet<{ energy: EnergyTotals; ts: string }>(key);
-    if (cached?.energy) return { energy: cached.energy, ts, ttlSec };
+    const cached = await cacheGet<{
+      energy: EnergyTotals;
+      cost: CostTotals;
+      ts: string;
+    }>(key);
+    if (cached?.energy && cached?.cost) {
+      return {
+        energy: cached.energy,
+        cost: cached.cost,
+        elec_rate: null,
+        ts,
+        ttlSec,
+      };
+    }
   }
 
-  // Current year always recomputed so the growing partial month stays fresh.
+  // Only billing months up to the current one. Future months are skipped.
   // Each billing month shares its cache entry with the month view.
+  const curBilling = billingCurrentMonth();
+  const months = billingMonthsForYear(y).filter((mm) => mm <= curBilling);
   let solar = { ...ZERO_SOLAR };
-  let bypass_kwh = 0;
-  for (const mm of billingMonthsForYear(y)) {
+  let bypassSum = 0;
+  let bypassMonths = 0;
+  let consumed_php = 0;
+  let solar_php = 0;
+  let system_loss_php = 0;
+  let bypass_php_sum = 0;
+  for (const mm of months) {
     const info = monthInfo(mm);
     const r = await loadSolarRange(
       info.key,
@@ -523,17 +533,42 @@ async function energyForYear(year: string | number): Promise<PeriodResult> {
       info.cappedEnd,
     );
     solar = addSolar(solar, r.solar);
-    bypass_kwh += bypassKwhForMonth(mm);
+    const rate = rateForMonth(mm);
+    const monthLoss = round1(
+      r.solar.generated_kwh - r.solar.consumed_kwh + r.solar.grid_import_kwh,
+    );
+    consumed_php += Math.round(r.solar.consumed_kwh * rate);
+    solar_php += Math.round(r.solar.generated_kwh * rate);
+    system_loss_php += Math.round(monthLoss * rate);
+    const raw = bypassKwhForMonth(mm);
+    if (raw != null) {
+      const monthBypass = Math.max(round1(raw - r.solar.grid_import_kwh), 0);
+      bypassSum += monthBypass;
+      bypassMonths += 1;
+      bypass_php_sum += Math.round(monthBypass * rate);
+    }
   }
+  const bypass_kwh = bypassMonths > 0 ? round1(bypassSum) : null;
+  const bypass_php: number | null = bypassMonths > 0 ? bypass_php_sum : null;
   const energy: EnergyTotals = {
     ...solar,
     system_loss_kwh: round1(
       solar.generated_kwh - solar.consumed_kwh + solar.grid_import_kwh,
     ),
-    bypass_kwh: Math.max(round1(bypass_kwh - solar.grid_import_kwh), 0),
+    bypass_kwh,
   };
-  if (!isCurrentYear) await cacheSet(key, { energy, ts }, ttlSec);
-  return { energy, ts, ttlSec };
+  const cost: CostTotals = {
+    consumed_php,
+    bypass_php,
+    solar_php,
+    system_loss_php,
+    net_php:
+      bypass_php == null
+        ? consumed_php + system_loss_php - solar_php
+        : consumed_php + bypass_php + system_loss_php - solar_php,
+  };
+  if (!isCurrentYear) await cacheSet(key, { energy, cost, ts }, ttlSec);
+  return { energy, cost, elec_rate: null, ts, ttlSec };
 }
 
 function resolveOrigin(ev: LambdaEvent): string | undefined {
@@ -628,25 +663,42 @@ async function handleEnergyPeriod(
   query: Record<string, string | undefined>,
   ev: LambdaEvent,
 ): Promise<APIGatewayProxyResult> {
+  if (period === "year") {
+    const result = await energyAndCostForYear(query.year ?? manilaToday().y);
+    return jsonResponse(
+      200,
+      {
+        timestamp: result.ts,
+        energy: result.energy,
+        cost: result.cost,
+        elec_rate: result.elec_rate,
+      },
+      ev,
+      result.ttlSec ?? PAST_TTL_SEC,
+    );
+  }
+
   const result =
     period === "day"
       ? await energyForDay(query.date ?? todayIso())
-      : period === "month"
-        ? await energyForMonth(query.month ?? billingCurrentMonth())
-        : await energyForYear(query.year ?? manilaToday().y);
+      : await energyForMonth(query.month ?? billingCurrentMonth());
 
   const rate =
-    period === "year"
-      ? avgRateForYear(query.year ?? manilaToday().y)
-      : period === "month"
-        ? rateForMonth(query.month ?? billingCurrentMonth())
-        : rateForMonth(billingMonthForDay(query.date ?? todayIso()));
+    period === "month"
+      ? rateForMonth(query.month ?? billingCurrentMonth())
+      : rateForMonth(billingMonthForDay(query.date ?? todayIso()));
 
   const consumed_php = Math.round(result.energy.consumed_kwh * rate);
-  const bypass_php = Math.round(result.energy.bypass_kwh * rate);
+  const bypass_php: number | null =
+    result.energy.bypass_kwh == null
+      ? null
+      : Math.round(result.energy.bypass_kwh * rate);
   const solar_php = Math.round(result.energy.generated_kwh * rate);
   const system_loss_php = Math.round(result.energy.system_loss_kwh * rate);
-  const net_php = consumed_php + bypass_php + system_loss_php - solar_php;
+  const net_php =
+    bypass_php == null
+      ? consumed_php + system_loss_php - solar_php
+      : consumed_php + bypass_php + system_loss_php - solar_php;
 
   return jsonResponse(
     200,
