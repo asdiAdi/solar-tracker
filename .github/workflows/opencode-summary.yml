@@ -1,0 +1,40 @@
+name: opencode-summary
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: opencode-summary-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: anomalyco/opencode/github@latest
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: opencode/muse-spark-1.3-contributor-free
+          variant: minimal
+          use_github_token: true
+          prompt: |
+            Summarize this pull request for reviewers. Keep it short and factual.
+            Output markdown with:
+            ## Summary
+            - 3-8 bullets: what changed and why.
+            ## Breaking changes
+            - List any API, schema, config, or deployment breaks. Say "None" if safe.
+            ## Notes
+            - Follow-ups, TODOs, or nits. Do not approve the PR.
