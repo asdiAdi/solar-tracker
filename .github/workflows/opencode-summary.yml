@@ -25,7 +25,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPEN_ROUTER_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: inclusionai/ling-3.0-flash-fin:free
+          model: openrouter/inclusionai/ling-3.0-flash-fin:free
           variant: medium
           use_github_token: true
           prompt: |
