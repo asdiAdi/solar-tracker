@@ -22,7 +22,7 @@
     "test:serve": "npx tsx watch --env-file=.env.test.serve infra/test/local-server.ts"
   },
   "dependencies": {
-    "@asdi/aws-infra": "^0.4.2",
+    "@asdi/aws-infra": "^0.4.3",
     "@aws-sdk/client-dynamodb": "^3.1129.0",
     "@aws-sdk/client-ssm": "^3.1132.0",
     "@aws-sdk/lib-dynamodb": "^3.1129.0",
