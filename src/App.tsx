@@ -78,6 +78,7 @@ export default function App() {
 }
 
 const VIEW_KEY = "solar-tracker-view";
+const LAST_SEEN_KEY = "solar-tracker-last-day";
 
 type StoredView = {
   period?: unknown;
@@ -134,13 +135,46 @@ function initialYear(stored: StoredView): string {
   return clampYear(String(currentYear()));
 }
 
+function isFirstLoadOfDay(today: string): boolean {
+  try {
+    return localStorage.getItem(LAST_SEEN_KEY) !== today;
+  } catch {
+    return true;
+  }
+}
+
+type InitialView = {
+  period: Period;
+  day: string;
+  month: string;
+  year: string;
+};
+
+function loadInitialView(): InitialView {
+  const today = todayISO();
+  if (isFirstLoadOfDay(today)) {
+    return {
+      period: "day",
+      day: clampDay(today),
+      month: clampMonth(billingCurrentMonthISO()),
+      year: clampYear(String(currentYear())),
+    };
+  }
+  const stored = loadStoredView();
+  return {
+    period: initialPeriod(stored),
+    day: initialDay(stored),
+    month: initialMonth(stored),
+    year: initialYear(stored),
+  };
+}
+
 function MainApp() {
-  const [period, setPeriod] = useState<Period>(() =>
-    initialPeriod(loadStoredView()),
-  );
-  const [day, setDay] = useState(() => initialDay(loadStoredView()));
-  const [month, setMonth] = useState(() => initialMonth(loadStoredView()));
-  const [year, setYear] = useState(() => initialYear(loadStoredView()));
+  const [initialView] = useState<InitialView>(loadInitialView);
+  const [period, setPeriod] = useState<Period>(initialView.period);
+  const [day, setDay] = useState(initialView.day);
+  const [month, setMonth] = useState(initialView.month);
+  const [year, setYear] = useState(initialView.year);
   const [data, setData] = useState<Record<string, PeriodResponse>>({});
   const [live, setLive] = useState<LiveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -149,6 +183,9 @@ function MainApp() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = getInitialTheme();
+    try {
+      localStorage.setItem(LAST_SEEN_KEY, todayISO());
+    } catch {}
   }, []);
 
   useEffect(() => {
