@@ -1,4 +1,3 @@
-import * as iam from "aws-cdk-lib/aws-iam";
 import * as cdk from "aws-cdk-lib";
 import { SolarTrackerBackendStack } from "./lib/solar-tracker-backend-stack.ts";
 import { StaticSiteStack, GithubDeployStack } from "@asdi/aws-infra";
@@ -19,21 +18,6 @@ const env = {
 const SSM_FRONTEND_PREFIX = `/solar-tracker/frontend/${stage}`;
 const SSM_BACKEND_PREFIX = `/solar-tracker/backend/${stage}`;
 const SSM_GITHUB_ACTION_PREFIX = `/solar-tracker/github-action/${stage}`;
-
-const createSSMPolicy = (prefixes: string[]): iam.PolicyStatement => {
-  return new iam.PolicyStatement({
-    sid: "AllowGetParameter",
-    actions: [
-      "ssm:GetParameter",
-      "ssm:GetParameters",
-      "ssm:GetParametersByPath",
-    ],
-    resources: prefixes.flatMap((p) => [
-      `arn:aws:ssm:${env.env.region}:${env.env.account}:parameter${p}`,
-      `arn:aws:ssm:${env.env.region}:${env.env.account}:parameter${p}/*`,
-    ]),
-  });
-};
 
 const frontend = new StaticSiteStack(
   app,
@@ -57,7 +41,6 @@ new SolarTrackerBackendStack(app, `SolarTrackerBackendStack-${stage}`, {
   stage,
   allowedOrigins: allowedOrigins,
   ssmPrefix: SSM_BACKEND_PREFIX,
-  ssmPolicy: createSSMPolicy([SSM_BACKEND_PREFIX]),
 });
 
 // github actions
@@ -76,9 +59,7 @@ const deployment = new GithubDeployStack(
       environment: stage,
     },
     managedPolicies: [frontend.staticSite.managedPolicy],
-    inlinePolicyStatements: [
-      createSSMPolicy([SSM_FRONTEND_PREFIX, SSM_GITHUB_ACTION_PREFIX]),
-    ],
+    ssmParameterPrefixes: [SSM_FRONTEND_PREFIX, SSM_GITHUB_ACTION_PREFIX],
   },
 );
 

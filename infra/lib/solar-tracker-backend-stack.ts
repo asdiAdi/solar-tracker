@@ -10,7 +10,6 @@ interface SolarTrackerBackendStackProps extends cdk.StackProps {
   stage: string;
   allowedOrigins: string[];
   ssmPrefix: string;
-  ssmPolicy: iam.PolicyStatement;
 }
 
 export class SolarTrackerBackendStack extends cdk.Stack {
@@ -62,8 +61,23 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       },
     });
     table.grantReadWriteData(fn);
+    const account = cdk.Stack.of(this).account;
+    const region = cdk.Stack.of(this).region;
 
-    fn.addToRolePolicy(props.ssmPolicy);
+    const ssmPolicy = new iam.PolicyStatement({
+      sid: "AllowGetParameter",
+      actions: [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+      ],
+      resources: [
+        `arn:aws:ssm:${region}:${account}:parameter${props.ssmPrefix}`,
+        `arn:aws:ssm:${region}:${account}:parameter${props.ssmPrefix}/*`,
+      ],
+    });
+
+    fn.addToRolePolicy(ssmPolicy);
 
     // access
     this.api = new apigw.RestApi(this, "SolarTrackerApi", {
