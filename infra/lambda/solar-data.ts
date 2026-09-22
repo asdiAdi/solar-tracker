@@ -312,8 +312,8 @@ async function loadSolarRange(
 }
 
 // fetch list of all manual monthly updates (single source for rate + bypass)
-async function loadManualUpdates(): Promise<ManualUpdate[]> {
-  if (manualUpdates) return manualUpdates;
+async function loadManualUpdates(refresh = false): Promise<ManualUpdate[]> {
+  if (manualUpdates && !refresh) return manualUpdates;
   const updates = await scanByPrefix<
     ManualUpdate,
     { rate: string | number; bypass_kwh: string | number }
@@ -774,6 +774,8 @@ async function handleMonthlyUpdate(
       bypass_kwh,
       updatedAt: new Date().toISOString(),
     });
+    manualUpdates = await loadManualUpdates(true);
+    latestManualRate = manualUpdates.at(-1)?.rate ?? NaN;
 
     return jsonResponse(200, { ok: true, month: mm, rate, bypass_kwh }, ev);
   } catch (e) {
@@ -795,7 +797,7 @@ export const handler = async (
 
   // initialize most used values
   config = await loadParams(SSM_PREFIX);
-  manualUpdates = await loadManualUpdates();
+  manualUpdates = await loadManualUpdates(isRefreshRequested(query));
   latestManualRate = manualUpdates.at(-1)?.rate ?? NaN;
 
   try {
