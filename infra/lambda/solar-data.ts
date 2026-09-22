@@ -40,7 +40,6 @@ const LIVE_TTL_SEC = 5 * 60;
 const DAY_TTL_SEC = 5 * 60;
 const MONTH_TTL_SEC = 60 * 60;
 const YEAR_TTL_SEC = 24 * 60 * 60;
-const PAST_TTL_SEC = 365 * 24 * 60 * 60;
 
 const ZERO_SOLAR: SolarTotals = {
   generated_kwh: 0,
@@ -150,7 +149,7 @@ function isRefreshRequested(
 async function cacheSet<T>(
   key: string,
   value: T,
-  ttlSec: number | null,
+  ttlSec?: number,
 ): Promise<void> {
   const client = getDocClient();
   if (!client) return;
@@ -160,7 +159,7 @@ async function cacheSet<T>(
       pk: key,
       data: value,
       updatedAt: new Date().toISOString(),
-      ...(ttlSec != null ? { expiresAt: nowSec + ttlSec } : {}),
+      ...(ttlSec != undefined ? { expiresAt: nowSec + ttlSec } : {}),
     };
     await client.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
   } catch {}
@@ -290,11 +289,11 @@ async function fetchBillingPeriod(
 async function loadSolarRange(
   key: string, // key e.g: day:2023-02-02
   ts: string, // timestamp
-  ttlSec: number | null, //timeToLive, only on current date/month/year
   start: string,
   end: string,
   force = false,
-): Promise<{ solar: SolarTotals; ts: string; ttlSec: number | null }> {
+  ttlSec?: number, //timeToLive, only on current date/month/year
+): Promise<{ solar: SolarTotals; ts: string; ttlSec?: number }> {
   // check if its already in cache
   const cached = await cacheGet<{
     raw: SolarmanHistoricalResponse;
@@ -402,7 +401,7 @@ function monthInfo(mm: string) {
     key: `month:${mm}`,
     ts,
     isCurrent,
-    ttlSec: isCurrent ? MONTH_TTL_SEC : null,
+    ttlSec: isCurrent ? MONTH_TTL_SEC : undefined,
     mm,
     start,
     end,
@@ -438,10 +437,10 @@ async function energyForDay(
   const { solar, ts, ttlSec } = await loadSolarRange(
     `data:${iso}`,
     `${iso}T00:00:00+08:00`,
-    isCurrent ? DAY_TTL_SEC : null,
     iso,
     iso,
     force,
+    isCurrent ? DAY_TTL_SEC : undefined,
   );
   const dailyBypass = bypassKwhForDay(iso);
   return {
@@ -468,10 +467,10 @@ async function energyForMonth(
   const { solar, ts, ttlSec } = await loadSolarRange(
     info.key,
     info.ts,
-    info.ttlSec,
     info.start,
     info.cappedEnd,
     force,
+    info.ttlSec,
   );
   const monthlyBypass = bypassKwhForMonth(month);
   return {
@@ -510,7 +509,7 @@ async function energyAndCostForYear(
   const ts = `${y}-12-16T00:00:00+08:00`;
   const today = todayIso();
   const isCurrentYear = billingYearContainsToday(y, today);
-  const ttlSec = isCurrentYear ? YEAR_TTL_SEC : null;
+  const ttlSec = isCurrentYear ? YEAR_TTL_SEC : undefined;
 
   if (!isCurrentYear && !force) {
     const cached = await cacheGet<{
@@ -545,10 +544,10 @@ async function energyAndCostForYear(
     const r = await loadSolarRange(
       info.key,
       info.ts,
-      info.ttlSec,
       info.start,
       info.cappedEnd,
       force && mm == curBilling,
+      info.ttlSec,
     );
     solar = addSolar(solar, r.solar);
     const rate = rateForMonth(mm);
@@ -699,7 +698,7 @@ async function handleEnergyPeriod(
         elec_rate: result.elec_rate,
       },
       ev,
-      result.ttlSec ?? PAST_TTL_SEC,
+      result.ttlSec,
     );
   }
 
@@ -740,7 +739,7 @@ async function handleEnergyPeriod(
       elec_rate: rate,
     },
     ev,
-    result.ttlSec ?? PAST_TTL_SEC,
+    result.ttlSec,
   );
 }
 
@@ -776,11 +775,11 @@ async function handleMonthlyUpdate(
     }
 
     const mm = `${year}-${month}`;
-    await cacheSet(
-      `${MANUAL_UPDATE_PREFIX}${mm}`,
-      { rate, bypass_kwh, updatedAt: new Date().toISOString() },
-      null,
-    );
+    await cacheSet(`${MANUAL_UPDATE_PREFIX}${mm}`, {
+      rate,
+      bypass_kwh,
+      updatedAt: new Date().toISOString(),
+    });
 
     return jsonResponse(200, { ok: true, month: mm, rate, bypass_kwh }, ev);
   } catch (e) {

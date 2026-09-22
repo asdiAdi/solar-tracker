@@ -42,7 +42,7 @@ interface ManualUpdate {
 interface PeriodResult {
   energy: EnergyTotals;
   ts: string;
-  ttlSec: number | null;
+  ttlSec?: number;
 }
 
 interface CostTotals {
