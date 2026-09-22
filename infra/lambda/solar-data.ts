@@ -601,7 +601,6 @@ function jsonResponse(
   statusCode: number,
   body: unknown,
   ev?: LambdaEvent,
-  maxAgeSec?: number,
 ): APIGatewayProxyResult {
   let origin: string | undefined;
   try {
@@ -613,8 +612,6 @@ function jsonResponse(
     statusCode,
     headers: {
       "Content-Type": "application/json",
-      "Cache-Control":
-        maxAgeSec !== undefined ? `public, max-age=${maxAgeSec}` : "no-cache",
       ...(origin !== undefined
         ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" }
         : {}),
@@ -673,7 +670,6 @@ async function handleLive(
       elec_rate: latestManualRate,
     },
     ev,
-    LIVE_TTL_SEC,
   );
 }
 
@@ -698,7 +694,6 @@ async function handleEnergyPeriod(
         elec_rate: result.elec_rate,
       },
       ev,
-      result.ttlSec,
     );
   }
 
@@ -739,7 +734,6 @@ async function handleEnergyPeriod(
       elec_rate: rate,
     },
     ev,
-    result.ttlSec,
   );
 }
 
