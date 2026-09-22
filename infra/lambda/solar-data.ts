@@ -614,7 +614,8 @@ function jsonResponse(
     statusCode,
     headers: {
       "Content-Type": "application/json",
-      "Cache-Control": `public, max-age=${maxAgeSec ?? 0}`,
+      "Cache-Control":
+        maxAgeSec !== undefined ? `public, max-age=${maxAgeSec}` : "no-cache",
       ...(origin !== undefined
         ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" }
         : {}),
