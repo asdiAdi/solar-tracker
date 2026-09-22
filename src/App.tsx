@@ -202,23 +202,31 @@ function MainApp() {
   const dateKey = period === "day" ? day : period === "month" ? month : year;
   const cacheKey = keyFor(period, dateKey);
 
-  const fetchLive = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const r = await getLive(signal);
-      if (signal?.aborted) return;
-      setLive(r);
-    } catch (e) {
-      if ((e as Error)?.name === "AbortError") return;
-    }
-  }, []);
+  const fetchLive = useCallback(
+    async (signal?: AbortSignal, refresh = false) => {
+      try {
+        const r = await getLive(signal, refresh);
+        if (signal?.aborted) return;
+        setLive(r);
+      } catch (e) {
+        if ((e as Error)?.name === "AbortError") return;
+      }
+    },
+    [],
+  );
 
   const fetchPeriod = useCallback(
-    async (kind: Period, key: string, signal?: AbortSignal) => {
+    async (
+      kind: Period,
+      key: string,
+      signal?: AbortSignal,
+      refresh = false,
+    ) => {
       setPending((p) => ({ ...p, [key]: (p[key] ?? 0) + 1 }));
       try {
         setError(null);
         const dateArg = key.slice(key.indexOf(":") + 1);
-        const r = await getPeriod(kind, dateArg, signal);
+        const r = await getPeriod(kind, dateArg, signal, refresh);
         if (signal?.aborted) return;
         setData((d) => ({ ...d, [key]: r }));
       } catch (e) {
@@ -281,18 +289,19 @@ function MainApp() {
     try {
       const keys = currentKeys();
       const jobs: Promise<unknown>[] = [
-        fetchLive(),
-        fetchPeriod(period, cacheKey),
+        fetchLive(undefined, true),
+        fetchPeriod(period, cacheKey, undefined, true),
       ];
 
       if (period === "day") {
-        if (keys.day !== cacheKey) jobs.push(fetchPeriod("day", keys.day));
+        if (keys.day !== cacheKey)
+          jobs.push(fetchPeriod("day", keys.day, undefined, true));
       } else if (period === "month") {
-        jobs.push(fetchPeriod("day", keys.day));
+        jobs.push(fetchPeriod("day", keys.day, undefined, true));
         if (keys.month !== cacheKey)
-          jobs.push(fetchPeriod("month", keys.month));
+          jobs.push(fetchPeriod("month", keys.month, undefined, true));
       } else if (keys.year !== cacheKey) {
-        jobs.push(fetchPeriod("year", keys.year));
+        jobs.push(fetchPeriod("year", keys.year, undefined, true));
       }
 
       await Promise.all(jobs);
