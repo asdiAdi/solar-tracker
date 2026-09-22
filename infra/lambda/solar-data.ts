@@ -40,7 +40,6 @@ const LIVE_TTL_SEC = 5 * 60;
 const DAY_TTL_SEC = 5 * 60;
 const MONTH_TTL_SEC = 60 * 60;
 const YEAR_TTL_SEC = 24 * 60 * 60;
-const PAST_TTL_SEC = 365 * 24 * 60 * 60;
 
 const ZERO_SOLAR: SolarTotals = {
   generated_kwh: 0,
@@ -140,10 +139,17 @@ async function cacheGet<T>(key: string): Promise<T | undefined> {
   }
 }
 
+function isRefreshRequested(
+  query: Record<string, string | undefined>,
+): boolean {
+  const v = query.refresh?.trim().toLowerCase();
+  return v === "1" || v === "true";
+}
+
 async function cacheSet<T>(
   key: string,
   value: T,
-  ttlSec: number | null,
+  ttlSec?: number,
 ): Promise<void> {
   const client = getDocClient();
   if (!client) return;
@@ -153,7 +159,7 @@ async function cacheSet<T>(
       pk: key,
       data: value,
       updatedAt: new Date().toISOString(),
-      ...(ttlSec != null ? { expiresAt: nowSec + ttlSec } : {}),
+      ...(ttlSec != undefined ? { expiresAt: nowSec + ttlSec } : {}),
     };
     await client.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
   } catch {}
@@ -283,10 +289,11 @@ async function fetchBillingPeriod(
 async function loadSolarRange(
   key: string, // key e.g: day:2023-02-02
   ts: string, // timestamp
-  ttlSec: number | null, //timeToLive, only on current date/month/year
   start: string,
   end: string,
-): Promise<{ solar: SolarTotals; ts: string; ttlSec: number | null }> {
+  force = false,
+  ttlSec?: number, //timeToLive, only on current date/month/year
+): Promise<{ solar: SolarTotals; ts: string; ttlSec?: number }> {
   // check if its already in cache
   const cached = await cacheGet<{
     raw: SolarmanHistoricalResponse;
@@ -294,7 +301,7 @@ async function loadSolarRange(
     end: string;
     ts?: string;
   }>(key);
-  if (cached?.raw && cached.start === start && cached.end === end) {
+  if (!force && cached?.raw && cached.start === start && cached.end === end) {
     return { solar: sumSolar(cached.raw), ts: cached.ts ?? ts, ttlSec };
   }
 
@@ -305,8 +312,8 @@ async function loadSolarRange(
 }
 
 // fetch list of all manual monthly updates (single source for rate + bypass)
-async function loadManualUpdates(): Promise<ManualUpdate[]> {
-  if (manualUpdates) return manualUpdates;
+async function loadManualUpdates(refresh = false): Promise<ManualUpdate[]> {
+  if (manualUpdates && !refresh) return manualUpdates;
   const updates = await scanByPrefix<
     ManualUpdate,
     { rate: string | number; bypass_kwh: string | number }
@@ -394,7 +401,7 @@ function monthInfo(mm: string) {
     key: `month:${mm}`,
     ts,
     isCurrent,
-    ttlSec: isCurrent ? MONTH_TTL_SEC : null,
+    ttlSec: isCurrent ? MONTH_TTL_SEC : undefined,
     mm,
     start,
     end,
@@ -417,7 +424,10 @@ function bypassKwhForDay(iso: string): number | null {
   return round1(monthly / days);
 }
 
-async function energyForDay(date: string): Promise<PeriodResult> {
+async function energyForDay(
+  date: string,
+  force = false,
+): Promise<PeriodResult> {
   // validates and normalizes date into iso format "YYYY-MM-DD"
   const [y, m, d] = date.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -427,9 +437,10 @@ async function energyForDay(date: string): Promise<PeriodResult> {
   const { solar, ts, ttlSec } = await loadSolarRange(
     `data:${iso}`,
     `${iso}T00:00:00+08:00`,
-    isCurrent ? DAY_TTL_SEC : null,
     iso,
     iso,
+    force,
+    isCurrent ? DAY_TTL_SEC : undefined,
   );
   const dailyBypass = bypassKwhForDay(iso);
   return {
@@ -448,14 +459,18 @@ async function energyForDay(date: string): Promise<PeriodResult> {
   };
 }
 
-async function energyForMonth(month: string): Promise<PeriodResult> {
+async function energyForMonth(
+  month: string,
+  force = false,
+): Promise<PeriodResult> {
   const info = monthInfo(month);
   const { solar, ts, ttlSec } = await loadSolarRange(
     info.key,
     info.ts,
-    info.ttlSec,
     info.start,
     info.cappedEnd,
+    force,
+    info.ttlSec,
   );
   const monthlyBypass = bypassKwhForMonth(month);
   return {
@@ -487,15 +502,16 @@ function billingYearContainsToday(y: number, today: string): boolean {
 
 async function energyAndCostForYear(
   year: string | number,
+  force = false,
 ): Promise<YearResult> {
   const y = Number(year);
   const key = `year:${y}:v2`;
   const ts = `${y}-12-16T00:00:00+08:00`;
   const today = todayIso();
   const isCurrentYear = billingYearContainsToday(y, today);
-  const ttlSec = isCurrentYear ? YEAR_TTL_SEC : null;
+  const ttlSec = isCurrentYear ? YEAR_TTL_SEC : undefined;
 
-  if (!isCurrentYear) {
+  if (!isCurrentYear && !force) {
     const cached = await cacheGet<{
       energy: EnergyTotals;
       cost: CostTotals;
@@ -528,9 +544,10 @@ async function energyAndCostForYear(
     const r = await loadSolarRange(
       info.key,
       info.ts,
-      info.ttlSec,
       info.start,
       info.cappedEnd,
+      force && mm == curBilling,
+      info.ttlSec,
     );
     solar = addSolar(solar, r.solar);
     const rate = rateForMonth(mm);
@@ -584,7 +601,6 @@ function jsonResponse(
   statusCode: number,
   body: unknown,
   ev?: LambdaEvent,
-  maxAgeSec?: number,
 ): APIGatewayProxyResult {
   let origin: string | undefined;
   try {
@@ -598,9 +614,6 @@ function jsonResponse(
       "Content-Type": "application/json",
       ...(origin !== undefined
         ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" }
-        : {}),
-      ...(maxAgeSec != null
-        ? { "Cache-Control": `public, max-age=${maxAgeSec}` }
         : {}),
     },
     body: JSON.stringify(body),
@@ -622,10 +635,13 @@ function requireValidPassword(password: string): void {
   }
 }
 
-async function handleLive(ev: LambdaEvent): Promise<APIGatewayProxyResult> {
+async function handleLive(
+  ev: LambdaEvent,
+  force = false,
+): Promise<APIGatewayProxyResult> {
   let body: SolarmanLiveResponse;
   const cached = await cacheGet<SolarmanLiveResponse>("live");
-  if (cached) {
+  if (cached && !force) {
     body = cached;
   } else {
     body = await solarmanPost("device/v1.0/currentData", {
@@ -654,7 +670,6 @@ async function handleLive(ev: LambdaEvent): Promise<APIGatewayProxyResult> {
       elec_rate: latestManualRate,
     },
     ev,
-    LIVE_TTL_SEC,
   );
 }
 
@@ -663,8 +678,13 @@ async function handleEnergyPeriod(
   query: Record<string, string | undefined>,
   ev: LambdaEvent,
 ): Promise<APIGatewayProxyResult> {
+  const force = isRefreshRequested(query);
+
   if (period === "year") {
-    const result = await energyAndCostForYear(query.year ?? manilaToday().y);
+    const result = await energyAndCostForYear(
+      query.year ?? manilaToday().y,
+      force,
+    );
     return jsonResponse(
       200,
       {
@@ -674,14 +694,13 @@ async function handleEnergyPeriod(
         elec_rate: result.elec_rate,
       },
       ev,
-      result.ttlSec ?? PAST_TTL_SEC,
     );
   }
 
   const result =
     period === "day"
-      ? await energyForDay(query.date ?? todayIso())
-      : await energyForMonth(query.month ?? billingCurrentMonth());
+      ? await energyForDay(query.date ?? todayIso(), force)
+      : await energyForMonth(query.month ?? billingCurrentMonth(), force);
 
   const rate =
     period === "month"
@@ -715,7 +734,6 @@ async function handleEnergyPeriod(
       elec_rate: rate,
     },
     ev,
-    result.ttlSec ?? PAST_TTL_SEC,
   );
 }
 
@@ -751,11 +769,13 @@ async function handleMonthlyUpdate(
     }
 
     const mm = `${year}-${month}`;
-    await cacheSet(
-      `${MANUAL_UPDATE_PREFIX}${mm}`,
-      { rate, bypass_kwh, updatedAt: new Date().toISOString() },
-      null,
-    );
+    await cacheSet(`${MANUAL_UPDATE_PREFIX}${mm}`, {
+      rate,
+      bypass_kwh,
+      updatedAt: new Date().toISOString(),
+    });
+    manualUpdates = await loadManualUpdates(true);
+    latestManualRate = manualUpdates.at(-1)?.rate ?? NaN;
 
     return jsonResponse(200, { ok: true, month: mm, rate, bypass_kwh }, ev);
   } catch (e) {
@@ -777,13 +797,13 @@ export const handler = async (
 
   // initialize most used values
   config = await loadParams(SSM_PREFIX);
-  manualUpdates = await loadManualUpdates();
+  manualUpdates = await loadManualUpdates(isRefreshRequested(query));
   latestManualRate = manualUpdates.at(-1)?.rate ?? NaN;
 
   try {
     switch (path) {
       case "live":
-        return await handleLive(ev);
+        return await handleLive(ev, isRefreshRequested(query));
       case "day":
       case "month":
       case "year":

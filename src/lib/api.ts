@@ -8,25 +8,33 @@ async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-export async function getLive(signal?: AbortSignal): Promise<LiveResponse> {
+export async function getLive(
+  signal?: AbortSignal,
+  refresh = false,
+): Promise<LiveResponse> {
   const base = CONFIG.API_BASE_URL.replace(/\/$/, "");
-  return fetchJson<LiveResponse>(`${base}/live`, signal);
+  const force = refresh ? "?refresh=1" : "";
+  return fetchJson<LiveResponse>(`${base}/live${force}`, signal);
 }
 
 export async function getPeriod(
   kind: "day" | "month" | "year",
   dateKey?: string,
   signal?: AbortSignal,
+  refresh = false,
 ): Promise<PeriodResponse> {
   const base = CONFIG.API_BASE_URL.replace(/\/$/, "");
+  const force = refresh ? "&refresh=1" : "";
   const q =
     kind === "day" && dateKey
-      ? `?date=${dateKey}`
+      ? `?date=${dateKey}${force}`
       : kind === "month" && dateKey
-        ? `?month=${dateKey}`
+        ? `?month=${dateKey}${force}`
         : kind === "year" && dateKey
-          ? `?year=${dateKey}`
-          : "";
+          ? `?year=${dateKey}${force}`
+          : refresh
+            ? "?refresh=1"
+            : "";
   return fetchJson<PeriodResponse>(`${base}/${kind}${q}`, signal);
 }
 
