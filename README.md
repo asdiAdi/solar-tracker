@@ -18,7 +18,3 @@ npm run dev
 npm run build    # -> dist/ static
 npm run preview
 ```
-
-## Infrastructure Diagram
-
-![Infrastructure Diagram](./infra.svg)
