@@ -1,12 +1,16 @@
 import type { APIGatewayProxyResult } from "aws-lambda";
+import { createHash } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { GetParametersByPathCommand, SSMClient } from "@aws-sdk/client-ssm";
 import {
+  DeleteCommand,
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
   ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
+import webpush from "web-push";
+import type { PushSubscription } from "web-push";
 
 type StringMap = Record<string, string>;
 
@@ -22,6 +26,7 @@ class HttpError extends Error {
 const SSM_PREFIX = process.env.SSM_PREFIX;
 const TABLE_NAME = process.env.TABLE_NAME;
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS;
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT ?? "";
 
 if (!SSM_PREFIX) {
   throw new Error("SSM_PREFIX undefined");
@@ -32,6 +37,9 @@ if (!TABLE_NAME) {
 if (!ALLOWED_ORIGINS) {
   throw new Error("ALLOWED_ORIGINS undefined");
 }
+if (!VAPID_SUBJECT) {
+  throw new Error("VAPID_SUBJECT undefined");
+}
 
 const TIMEZONE = "Asia/Manila";
 const MANUAL_UPDATE_PREFIX = "manual-update:";
@@ -40,6 +48,11 @@ const LIVE_TTL_SEC = 5 * 60;
 const DAY_TTL_SEC = 5 * 60;
 const MONTH_TTL_SEC = 60 * 60;
 const YEAR_TTL_SEC = 24 * 60 * 60;
+const PUSH_SUB_PREFIX = "push:sub:";
+const ALERT_PREFIX = "alert:";
+const ALERT_TTL_SEC = 2 * 24 * 60 * 60;
+const DAILY_GENERATION_MAX_KWH = 30;
+const BATTERY_KWH = (660 * 52) / 1000;
 
 const ZERO_SOLAR: SolarTotals = {
   generated_kwh: 0,
@@ -163,6 +176,20 @@ async function cacheSet<T>(
     };
     await client.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
   } catch {}
+}
+
+async function cacheDelete(key: string): Promise<void> {
+  const client = getDocClient();
+  if (!client) return;
+  try {
+    await client.send(
+      new DeleteCommand({ TableName: TABLE_NAME, Key: { pk: key } }),
+    );
+  } catch {}
+}
+
+function pushSubKey(endpoint: string): string {
+  return `${PUSH_SUB_PREFIX}${createHash("sha256").update(endpoint).digest("hex")}`;
 }
 
 // scan the table and parse using callback function
@@ -635,10 +662,7 @@ function requireValidPassword(password: string): void {
   }
 }
 
-async function handleLive(
-  ev: LambdaEvent,
-  force = false,
-): Promise<APIGatewayProxyResult> {
+async function readLive(force = false): Promise<LiveMetrics> {
   let body: SolarmanLiveResponse;
   const cached = await cacheGet<SolarmanLiveResponse>("live");
   if (cached && !force) {
@@ -651,15 +675,26 @@ async function handleLive(
   }
 
   const m = toKeyValueMap(body.dataList);
-  const data = {
+  return {
     solar_w: Math.round(
       toNumber(m.DP1) + toNumber(m.DP2) + toNumber(m.DP3) + toNumber(m.DP4),
     ),
     home_w: Math.round(toNumber(m.E_Puse_t1 ?? m.C_P_L1)),
     grid_w: Math.round(toNumber(m.T_A_P_O_G ?? m.UAP1)),
     battery_w: Math.round(-toNumber(m.B_P1)),
-    battery_soc_pct: Math.round(toNumber(m.B_left_cap1)),
+    // keep missing SOC as NaN so callers can tell it apart from 0%
+    battery_soc_pct:
+      m.B_left_cap1 === undefined || m.B_left_cap1 === ""
+        ? Number.NaN
+        : Math.round(toNumber(m.B_left_cap1)),
   };
+}
+
+async function handleLive(
+  ev: LambdaEvent,
+  force = false,
+): Promise<APIGatewayProxyResult> {
+  const data = await readLive(force);
 
   const t = manilaToday();
   return jsonResponse(
@@ -784,11 +819,147 @@ async function handleMonthlyUpdate(
   }
 }
 
+async function handlePushSubscribe(
+  ev: LambdaEvent,
+): Promise<APIGatewayProxyResult> {
+  const subscription = parseJsonBody(ev).subscription as
+    PushSubscription | undefined;
+  if (
+    !subscription?.endpoint ||
+    !subscription.keys?.p256dh ||
+    !subscription.keys?.auth
+  ) {
+    return jsonResponse(400, { error: "invalid subscription" }, ev);
+  }
+  await cacheSet(pushSubKey(subscription.endpoint), subscription);
+  return jsonResponse(200, { ok: true }, ev);
+}
+
+async function handlePushUnsubscribe(
+  ev: LambdaEvent,
+): Promise<APIGatewayProxyResult> {
+  const endpoint = String(parseJsonBody(ev).endpoint ?? "");
+  if (!endpoint) return jsonResponse(400, { error: "invalid endpoint" }, ev);
+  await cacheDelete(pushSubKey(endpoint));
+  return jsonResponse(200, { ok: true }, ev);
+}
+
+async function handleBatteryCheck(
+  query: Record<string, string | undefined>,
+  ev: LambdaEvent,
+): Promise<APIGatewayProxyResult> {
+  const dry = query.dry === "1" || query.dry === "true";
+  const today = todayIso();
+  const alertKey = `${ALERT_PREFIX}${today}`;
+  const alreadyAlerted = (await cacheGet(alertKey)) !== undefined;
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: TIMEZONE,
+      hour: "2-digit",
+      hour12: false,
+    }).format(new Date()),
+  );
+  const inWindow = hour >= 6 && hour < 18;
+
+  if (!inWindow && !dry) {
+    return jsonResponse(
+      200,
+      { skipped: "outside-window", in_window: inWindow },
+      ev,
+    );
+  }
+  if (alreadyAlerted && !dry) {
+    return jsonResponse(
+      200,
+      { skipped: "already-alerted", in_window: inWindow },
+      ev,
+    );
+  }
+
+  const [day, live] = await Promise.all([energyForDay(today), readLive()]);
+  const generated_kwh = day.energy.generated_kwh;
+  const soc_pct = live.battery_soc_pct;
+  if (!Number.isFinite(soc_pct)) {
+    return jsonResponse(
+      200,
+      { skipped: "no-soc", generated_kwh, in_window: inWindow },
+      ev,
+    );
+  }
+
+  const remaining_kwh = round1(
+    Math.max(0, DAILY_GENERATION_MAX_KWH - generated_kwh),
+  );
+  const needed_kwh = round1(((100 - soc_pct) / 100) * BATTERY_KWH);
+  const possible = remaining_kwh >= needed_kwh;
+
+  const result = {
+    generated_kwh,
+    remaining_kwh,
+    soc_pct,
+    needed_kwh,
+    possible,
+    in_window: inWindow,
+    already_alerted: alreadyAlerted,
+  };
+
+  if (dry) return jsonResponse(200, result, ev);
+  if (possible) {
+    return jsonResponse(200, { ...result, skipped: "possible" }, ev);
+  }
+
+  webpush.setVapidDetails(
+    VAPID_SUBJECT,
+    getParam("VAPID_PUBLIC_KEY"),
+    getParam("VAPID_PRIVATE_KEY"),
+  );
+
+  const subscriptions = await scanByPrefix<{
+    key: string;
+    subscription: PushSubscription;
+  }>(PUSH_SUB_PREFIX, (pk, data) => {
+    const subscription = data as PushSubscription | undefined;
+    if (!subscription?.endpoint) return undefined;
+    return { key: pk, subscription };
+  });
+
+  const payload = JSON.stringify({
+    title: "100% battery no longer possible!",
+    body: `Only ${remaining_kwh.toFixed(1)} kWh of generation left, but ${needed_kwh.toFixed(1)} kWh needed to full (${soc_pct}% now). Save electricity!`,
+    url: "/",
+  });
+
+  let sent = 0;
+  for (const { key, subscription } of subscriptions) {
+    try {
+      await webpush.sendNotification(subscription, payload);
+      sent += 1;
+    } catch (e) {
+      const statusCode = (e as { statusCode?: number }).statusCode;
+      if (statusCode === 404 || statusCode === 410) await cacheDelete(key);
+    }
+  }
+
+  if (sent > 0) {
+    await cacheSet(
+      alertKey,
+      { sentAt: new Date().toISOString(), sent },
+      ALERT_TTL_SEC,
+    );
+  }
+
+  return jsonResponse(
+    200,
+    { ...result, sent, subscriptions: subscriptions.length },
+    ev,
+  );
+}
+
 export const handler = async (
   ev: LambdaEvent,
 ): Promise<APIGatewayProxyResult> => {
   const fullPath = ev.path ?? ev.rawPath ?? "";
-  const path = fullPath.replace(/\/$/, "").split("/").pop() ?? "";
+  const path = fullPath.replace(/^\/+/, "").replace(/\/+$/, "");
 
   const query = (ev.queryStringParameters ?? {}) as Record<
     string,
@@ -810,6 +981,18 @@ export const handler = async (
         return await handleEnergyPeriod(path, query, ev);
       case "monthly-update":
         return await handleMonthlyUpdate(ev);
+      case "push/key":
+        return jsonResponse(
+          200,
+          { publicKey: getParam("VAPID_PUBLIC_KEY") },
+          ev,
+        );
+      case "push/subscribe":
+        return await handlePushSubscribe(ev);
+      case "push/unsubscribe":
+        return await handlePushUnsubscribe(ev);
+      case "battery-check":
+        return await handleBatteryCheck(query, ev);
       default:
         return jsonResponse(404, { error: "unknown route" }, ev);
     }

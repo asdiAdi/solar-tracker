@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { CONFIG } from "./config";
-import { getLive, getPeriod } from "./lib/api";
+import {
+  getLive,
+  getPeriod,
+  getPushKey,
+  subscribePush,
+  unsubscribePush,
+} from "./lib/api";
 import {
   billingCurrentMonthISO,
   clampDay,
@@ -50,6 +56,8 @@ const DEFAULT_COST: CostTotals = {
 const ROUTES: Record<string, React.ComponentType> = {
   "/monthly-update": MonthlyUpdatePage,
 };
+
+type PushState = "checking" | "off" | "on" | "busy" | "denied" | "unsupported";
 
 const keyFor = (kind: Period, value: string) => `${kind}:${value}`;
 
@@ -180,6 +188,8 @@ function MainApp() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [pending, setPending] = useState<Record<string, number>>({});
+  const [pushState, setPushState] = useState<PushState>("checking");
+  const [pushNote, setPushNote] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = getInitialTheme();
@@ -187,6 +197,40 @@ function MainApp() {
       localStorage.setItem(LAST_SEEN_KEY, todayISO());
     } catch {}
   }, []);
+
+  useEffect(() => {
+    if (
+      !("serviceWorker" in navigator) ||
+      !("PushManager" in window) ||
+      !("Notification" in window)
+    ) {
+      setPushState("unsupported");
+      return;
+    }
+    if (Notification.permission === "denied") {
+      setPushState("denied");
+      return;
+    }
+    let cancelled = false;
+    navigator.serviceWorker
+      .getRegistration()
+      .then((reg) => reg?.pushManager.getSubscription())
+      .then((sub) => {
+        if (!cancelled) setPushState(sub ? "on" : "off");
+      })
+      .catch(() => {
+        if (!cancelled) setPushState("off");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pushNote) return;
+    const id = setTimeout(() => setPushNote(null), 5000);
+    return () => clearTimeout(id);
+  }, [pushNote]);
 
   useEffect(() => {
     try {
@@ -310,6 +354,78 @@ function MainApp() {
     }
   }, [fetchLive, fetchPeriod, period, cacheKey]);
 
+  const onTogglePush = async () => {
+    if (
+      pushState === "checking" ||
+      pushState === "busy" ||
+      pushState === "unsupported"
+    )
+      return;
+    setPushNote(null);
+
+    if (pushState === "denied") {
+      setPushNote("Notifications are blocked. Allow them in browser settings.");
+      return;
+    }
+
+    if (pushState === "on") {
+      setPushState("busy");
+      try {
+        const reg = await navigator.serviceWorker.getRegistration();
+        const sub = await reg?.pushManager.getSubscription();
+        if (sub) {
+          await unsubscribePush(sub.endpoint);
+          await sub.unsubscribe();
+        }
+        setPushState("off");
+        setPushNote("Battery alerts off for this device");
+      } catch {
+        setPushState("on");
+        setPushNote("Could not turn off alerts");
+      }
+      return;
+    }
+
+    setPushState("busy");
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) {
+        setPushState("off");
+        setPushNote("Alerts need the installed app (iOS: Add to Home Screen)");
+        return;
+      }
+
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setPushState(permission === "denied" ? "denied" : "off");
+        setPushNote("Notifications not allowed");
+        return;
+      }
+
+      const { publicKey } = await getPushKey();
+      const padded = (
+        publicKey + "=".repeat((4 - (publicKey.length % 4)) % 4)
+      )
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+      const raw = atob(padded);
+      const applicationServerKey = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+
+      const sub =
+        (await reg.pushManager.getSubscription()) ??
+        (await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey,
+        }));
+      await subscribePush(sub.toJSON());
+      setPushState("on");
+      setPushNote("Battery alerts on for this device");
+    } catch {
+      setPushState("off");
+      setPushNote("Could not enable alerts");
+    }
+  };
+
   // const keys = useMemo(currentKeys, [dateKey]);
   const cur = data[cacheKey] ?? null;
   // const dayData = data[keys.day] ?? null;
@@ -368,7 +484,55 @@ function MainApp() {
                 {refreshing ? "Refreshing…" : "Refresh"}
               </span>
             </button>
+            <button
+              type="button"
+              onClick={onTogglePush}
+              disabled={
+                pushState === "checking" ||
+                pushState === "busy" ||
+                pushState === "unsupported"
+              }
+              aria-pressed={pushState === "on"}
+              aria-label={
+                pushState === "on"
+                  ? "Turn off battery alerts"
+                  : "Turn on battery alerts"
+              }
+              title={
+                pushState === "denied"
+                  ? "Notifications are blocked in browser settings"
+                  : pushState === "unsupported"
+                    ? "Notifications need the installed app (iOS: Add to Home Screen)"
+                    : pushState === "on"
+                      ? "Battery alerts are on"
+                      : "Get a push alert when 100% is no longer possible"
+              }
+              className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg font-medium shrink-0 inline-flex items-center justify-center gap-1.5 text-sm sm:text-base"
+              style={{
+                background: "transparent",
+                color: "var(--muted)",
+                opacity:
+                  pushState === "checking" ||
+                  pushState === "busy" ||
+                  pushState === "unsupported"
+                    ? 0.5
+                    : 0.75,
+                border: "1px solid transparent",
+              }}
+            >
+              <span aria-hidden className="text-base leading-none">
+                {pushState === "on" ? "🔔" : "🔕"}
+              </span>
+              <span className="hidden sm:inline text-base">
+                {pushState === "on" ? "Alerts on" : "Alerts"}
+              </span>
+            </button>
           </div>
+          {pushNote && (
+            <div role="status" className="text-xs muted font-medium">
+              {pushNote}
+            </div>
+          )}
           <ThemeSwitcher />
         </header>
 

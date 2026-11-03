@@ -1,6 +1,8 @@
 import * as cdk from "aws-cdk-lib";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as events from "aws-cdk-lib/aws-events";
+import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as iam from "aws-cdk-lib/aws-iam";
@@ -10,6 +12,7 @@ interface SolarTrackerBackendStackProps extends cdk.StackProps {
   stage: string;
   allowedOrigins: string[];
   ssmPrefix: string;
+  vapidSubject: string;
 }
 
 export class SolarTrackerBackendStack extends cdk.Stack {
@@ -58,6 +61,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
         TABLE_NAME: table.tableName,
         SSM_PREFIX: props.ssmPrefix,
         ALLOWED_ORIGINS: props.allowedOrigins.join(","),
+        VAPID_SUBJECT: props.vapidSubject,
       },
     });
     table.grantReadWriteData(fn);
@@ -104,7 +108,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
     plan.addApiStage({ stage: this.api.deploymentStage });
     plan.addApiKey(key);
 
-    for (const p of ["live", "day", "month", "year"]) {
+    for (const p of ["live", "day", "month", "year", "battery-check"]) {
       this.api.root
         .addResource(p)
         .addMethod("GET", new apigw.LambdaIntegration(fn), {
@@ -116,5 +120,27 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       .addMethod("POST", new apigw.LambdaIntegration(fn), {
         apiKeyRequired: true,
       });
+
+    const push = this.api.root.addResource("push");
+    push.addResource("key").addMethod("GET", new apigw.LambdaIntegration(fn), {
+      apiKeyRequired: true,
+    });
+    for (const action of ["subscribe", "unsubscribe"]) {
+      push
+        .addResource(action)
+        .addMethod("POST", new apigw.LambdaIntegration(fn), {
+          apiKeyRequired: true,
+        });
+    }
+
+    new events.Rule(this, "BatteryAlertRule", {
+      ruleName: `SolarBatteryAlert-${props.stage}`,
+      schedule: events.Schedule.rate(cdk.Duration.minutes(30)),
+      targets: [
+        new targets.LambdaFunction(fn, {
+          event: events.RuleTargetInput.fromObject({ path: "/battery-check" }),
+        }),
+      ],
+    });
   }
 }

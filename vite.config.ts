@@ -60,6 +60,7 @@ export default defineConfig({
       },
       workbox: {
         runtimeCaching: [],
+        importScripts: ["push-sw.js"],
       },
     }),
   ],
