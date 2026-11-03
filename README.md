@@ -19,6 +19,14 @@ npm run build    # -> dist/ static
 npm run preview
 ```
 
-## Infrastructure Diagram
+### VAPID keys
 
-![Infrastructure Diagram](./infra.svg)
+Before deploying, generate a key pair and upload it to SSM:
+
+```
+npm run vapid:keys
+```
+
+Run the printed `aws ssm put-parameter` commands for the stages you deploy. The
+public key is a String and the private key is a SecureString under
+`/solar-tracker/backend/<stage>/`.

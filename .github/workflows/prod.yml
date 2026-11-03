@@ -75,7 +75,7 @@ jobs:
 
       - name: Set no-cache for service worker and manifest
         run: |
-          for f in sw.js registerSW.js manifest.webmanifest; do
+          for f in sw.js registerSW.js push-sw.js manifest.webmanifest; do
             if [ -f "dist/$f" ]; then
               ct="application/javascript"
               if [ "$f" = "manifest.webmanifest" ]; then ct="application/manifest+json"; fi

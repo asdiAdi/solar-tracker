@@ -19,7 +19,8 @@
     "build:dev": "tsc -b && vite build && npm run synth:dev",
     "build:prod": "tsc -b && vite build && npm run synth:prod",
     "test:live": "node infra/test/fetch-live.mjs",
-    "test:serve": "npx tsx watch --env-file=.env.test.serve infra/test/local-server.ts"
+    "test:serve": "npx tsx watch --env-file=.env.test.serve infra/test/local-server.ts",
+    "vapid:keys": "node scripts/vapid-keys.mjs"
   },
   "dependencies": {
     "@asdi/aws-infra": "^0.4.3",
@@ -29,7 +30,8 @@
     "aws-cdk-lib": "^2.269.0",
     "constructs": "^10.8.1",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -37,6 +39,7 @@
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^6.1.0",
     "aws-cdk": "^2.1140.0",
     "esbuild": "^0.28.2",

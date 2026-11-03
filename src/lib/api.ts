@@ -72,3 +72,33 @@ export async function postMonthlyUpdate(
     bypass_kwh: number;
   }>;
 }
+
+export async function getPushKey(
+  signal?: AbortSignal,
+): Promise<{ publicKey: string }> {
+  const base = CONFIG.API_BASE_URL.replace(/\/$/, "");
+  return fetchJson<{ publicKey: string }>(`${base}/push/key`, signal);
+}
+
+async function postPush(
+  action: "subscribe" | "unsubscribe",
+  body: unknown,
+): Promise<void> {
+  const base = CONFIG.API_BASE_URL.replace(/\/$/, "");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (CONFIG.API_KEY) headers["x-api-key"] = CONFIG.API_KEY;
+  const r = await fetch(`${base}/push/${action}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`push ${action}: ${r.status}`);
+}
+
+export const subscribePush = (subscription: PushSubscriptionJSON) =>
+  postPush("subscribe", { subscription });
+
+export const unsubscribePush = (endpoint: string) =>
+  postPush("unsubscribe", { endpoint });

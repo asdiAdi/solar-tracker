@@ -41,6 +41,7 @@ new SolarTrackerBackendStack(app, `SolarTrackerBackendStack-${stage}`, {
   stage,
   allowedOrigins: allowedOrigins,
   ssmPrefix: SSM_BACKEND_PREFIX,
+  vapidSubject: url,
 });
 
 // github actions
