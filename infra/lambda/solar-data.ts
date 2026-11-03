@@ -832,6 +832,26 @@ async function handlePushSubscribe(
     return jsonResponse(400, { error: "invalid subscription" }, ev);
   }
   await cacheSet(pushSubKey(subscription.endpoint), subscription);
+
+  try {
+    webpush.setVapidDetails(
+      VAPID_SUBJECT,
+      getParam("VAPID_PUBLIC_KEY"),
+      getParam("VAPID_PRIVATE_KEY"),
+    );
+    await webpush.sendNotification(
+      subscription,
+      JSON.stringify({
+        title: "Battery alerts are on",
+        body: "You'll be notified when 100% is no longer possible.",
+        url: "/",
+        tag: "solar-alerts-on",
+      }),
+    );
+  } catch (e) {
+    console.log("welcome push failed", e);
+  }
+
   return jsonResponse(200, { ok: true }, ev);
 }
 
@@ -844,11 +864,7 @@ async function handlePushUnsubscribe(
   return jsonResponse(200, { ok: true }, ev);
 }
 
-async function handleBatteryCheck(
-  query: Record<string, string | undefined>,
-  ev: LambdaEvent,
-): Promise<APIGatewayProxyResult> {
-  const dry = query.dry === "1" || query.dry === "true";
+async function handleBatteryAlert(): Promise<APIGatewayProxyResult> {
   const today = todayIso();
   const alertKey = `${ALERT_PREFIX}${today}`;
   const alreadyAlerted = (await cacheGet(alertKey)) !== undefined;
@@ -859,32 +875,23 @@ async function handleBatteryCheck(
       hour12: false,
     }).format(new Date()),
   );
-  const inWindow = hour >= 6 && hour < 18;
+  const inWindow = hour >= 6 && hour < 22;
 
-  if (!inWindow && !dry) {
-    return jsonResponse(
-      200,
-      { skipped: "outside-window", in_window: inWindow },
-      ev,
-    );
+  if (!inWindow) {
+    console.log("battery alert skipped: outside window", { hour });
+    return jsonResponse(200, { skipped: "outside-window", in_window: false });
   }
-  if (alreadyAlerted && !dry) {
-    return jsonResponse(
-      200,
-      { skipped: "already-alerted", in_window: inWindow },
-      ev,
-    );
+  if (alreadyAlerted) {
+    console.log("battery alert skipped: already alerted today");
+    return jsonResponse(200, { skipped: "already-alerted" });
   }
 
   const [day, live] = await Promise.all([energyForDay(today), readLive()]);
   const generated_kwh = day.energy.generated_kwh;
   const soc_pct = live.battery_soc_pct;
   if (!Number.isFinite(soc_pct)) {
-    return jsonResponse(
-      200,
-      { skipped: "no-soc", generated_kwh, in_window: inWindow },
-      ev,
-    );
+    console.log("battery alert skipped: no SOC", { generated_kwh });
+    return jsonResponse(200, { skipped: "no-soc", generated_kwh });
   }
 
   const remaining_kwh = round1(
@@ -893,19 +900,20 @@ async function handleBatteryCheck(
   const needed_kwh = round1(((100 - soc_pct) / 100) * BATTERY_KWH);
   const possible = remaining_kwh >= needed_kwh;
 
-  const result = {
-    generated_kwh,
-    remaining_kwh,
-    soc_pct,
-    needed_kwh,
-    possible,
-    in_window: inWindow,
-    already_alerted: alreadyAlerted,
-  };
-
-  if (dry) return jsonResponse(200, result, ev);
   if (possible) {
-    return jsonResponse(200, { ...result, skipped: "possible" }, ev);
+    console.log("battery alert skipped: still possible", {
+      generated_kwh,
+      remaining_kwh,
+      soc_pct,
+      needed_kwh,
+    });
+    return jsonResponse(200, {
+      skipped: "possible",
+      generated_kwh,
+      remaining_kwh,
+      soc_pct,
+      needed_kwh,
+    });
   }
 
   webpush.setVapidDetails(
@@ -948,11 +956,17 @@ async function handleBatteryCheck(
     );
   }
 
-  return jsonResponse(
-    200,
-    { ...result, sent, subscriptions: subscriptions.length },
-    ev,
-  );
+  const result = {
+    generated_kwh,
+    remaining_kwh,
+    soc_pct,
+    needed_kwh,
+    possible,
+    subscriptions: subscriptions.length,
+    sent,
+  };
+  console.log("battery alert sent", result);
+  return jsonResponse(200, result);
 }
 
 export const handler = async (
@@ -972,6 +986,10 @@ export const handler = async (
   latestManualRate = manualUpdates.at(-1)?.rate ?? NaN;
 
   try {
+    if (ev.source === "solar-tracker.scheduler") {
+      return await handleBatteryAlert();
+    }
+
     switch (path) {
       case "live":
         return await handleLive(ev, isRefreshRequested(query));
@@ -991,8 +1009,6 @@ export const handler = async (
         return await handlePushSubscribe(ev);
       case "push/unsubscribe":
         return await handlePushUnsubscribe(ev);
-      case "battery-check":
-        return await handleBatteryCheck(query, ev);
       default:
         return jsonResponse(404, { error: "unknown route" }, ev);
     }

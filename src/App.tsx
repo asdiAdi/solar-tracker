@@ -17,6 +17,7 @@ import {
   todayISO,
 } from "./lib/date";
 import ThemeSwitcher, { getInitialTheme } from "./components/ThemeSwitcher";
+import LoadingSpinner from "./components/LoadingSpinner";
 import PeriodTabs from "./components/PeriodTabs";
 import DateSelector from "./components/DateSelector";
 import LiveCards from "./components/LiveCards";
@@ -189,7 +190,7 @@ function MainApp() {
   const [refreshing, setRefreshing] = useState(false);
   const [pending, setPending] = useState<Record<string, number>>({});
   const [pushState, setPushState] = useState<PushState>("checking");
-  const [pushNote, setPushNote] = useState<string | null>(null);
+  const [pushModal, setPushModal] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = getInitialTheme();
@@ -227,10 +228,13 @@ function MainApp() {
   }, []);
 
   useEffect(() => {
-    if (!pushNote) return;
-    const id = setTimeout(() => setPushNote(null), 5000);
-    return () => clearTimeout(id);
-  }, [pushNote]);
+    if (!pushModal) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPushModal(null);
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [pushModal]);
 
   useEffect(() => {
     try {
@@ -355,16 +359,15 @@ function MainApp() {
   }, [fetchLive, fetchPeriod, period, cacheKey]);
 
   const onTogglePush = async () => {
-    if (
-      pushState === "checking" ||
-      pushState === "busy" ||
-      pushState === "unsupported"
-    )
+    if (pushState === "checking" || pushState === "busy") return;
+
+    if (pushState === "unsupported") {
+      setPushModal("Notifications are not supported in this browser.");
       return;
-    setPushNote(null);
+    }
 
     if (pushState === "denied") {
-      setPushNote("Notifications are blocked. Allow them in browser settings.");
+      setPushModal("Notifications are blocked. Allow them in browser settings.");
       return;
     }
 
@@ -378,10 +381,10 @@ function MainApp() {
           await sub.unsubscribe();
         }
         setPushState("off");
-        setPushNote("Battery alerts off for this device");
+        setPushModal("Battery alerts off for this device.");
       } catch {
         setPushState("on");
-        setPushNote("Could not turn off alerts");
+        setPushModal("Could not update alerts. Try again.");
       }
       return;
     }
@@ -391,14 +394,18 @@ function MainApp() {
       const reg = await navigator.serviceWorker.getRegistration();
       if (!reg) {
         setPushState("off");
-        setPushNote("Alerts need the installed app (iOS: Add to Home Screen)");
+        setPushModal("Could not update alerts. Try again.");
         return;
       }
 
       const permission = await Notification.requestPermission();
       if (permission !== "granted") {
         setPushState(permission === "denied" ? "denied" : "off");
-        setPushNote("Notifications not allowed");
+        setPushModal(
+          permission === "denied"
+            ? "Notifications are blocked. Allow them in browser settings."
+            : "Notifications not allowed.",
+        );
         return;
       }
 
@@ -419,10 +426,10 @@ function MainApp() {
         }));
       await subscribePush(sub.toJSON());
       setPushState("on");
-      setPushNote("Battery alerts on for this device");
+      setPushModal("Battery alerts on for this device.");
     } catch {
       setPushState("off");
-      setPushNote("Could not enable alerts");
+      setPushModal("Could not update alerts. Try again.");
     }
   };
 
@@ -462,36 +469,8 @@ function MainApp() {
             </div>
             <button
               type="button"
-              onClick={onRefresh}
-              disabled={refreshing}
-              aria-label="Refresh data"
-              title="Refresh data"
-              className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg font-medium shrink-0 inline-flex items-center justify-center gap-1.5 text-sm sm:text-base"
-              style={{
-                background: "transparent",
-                color: "var(--muted)",
-                opacity: refreshing ? 0.5 : 0.75,
-                border: "1px solid transparent",
-              }}
-            >
-              <span aria-hidden className="text-base leading-none">
-                ⟳
-              </span>
-              <span className="hidden sm:inline text-base">
-                {refreshing ? "Refreshing…" : "Refresh"}
-              </span>
-              <span className="visually-hidden">
-                {refreshing ? "Refreshing…" : "Refresh"}
-              </span>
-            </button>
-            <button
-              type="button"
               onClick={onTogglePush}
-              disabled={
-                pushState === "checking" ||
-                pushState === "busy" ||
-                pushState === "unsupported"
-              }
+              disabled={pushState === "checking" || pushState === "busy"}
               aria-pressed={pushState === "on"}
               aria-label={
                 pushState === "on"
@@ -502,39 +481,91 @@ function MainApp() {
                 pushState === "denied"
                   ? "Notifications are blocked in browser settings"
                   : pushState === "unsupported"
-                    ? "Notifications need the installed app (iOS: Add to Home Screen)"
+                    ? "Notifications are not supported in this browser"
                     : pushState === "on"
                       ? "Battery alerts are on"
-                      : "Get a push alert when 100% is no longer possible"
+                      : "Get a battery alert when 100% is no longer possible"
               }
-              className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-lg font-medium shrink-0 inline-flex items-center justify-center gap-1.5 text-sm sm:text-base"
+              className="w-8 h-8 rounded-lg font-medium shrink-0 inline-flex items-center justify-center"
               style={{
                 background: "transparent",
                 color: "var(--muted)",
                 opacity:
-                  pushState === "checking" ||
-                  pushState === "busy" ||
-                  pushState === "unsupported"
-                    ? 0.5
-                    : 0.75,
+                  pushState === "checking" || pushState === "busy" ? 0.5 : 0.75,
+                border: "1px solid transparent",
+              }}
+            >
+              {pushState === "busy" ? (
+                <LoadingSpinner label="Updating alerts" />
+              ) : (
+                <span aria-hidden className="text-base leading-none">
+                  {pushState === "on" ? "🔔" : "🔕"}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={refreshing}
+              aria-label="Refresh data"
+              title="Refresh data"
+              className="w-8 h-8 rounded-lg font-medium shrink-0 inline-flex items-center justify-center"
+              style={{
+                background: "transparent",
+                color: "var(--muted)",
+                opacity: refreshing ? 0.5 : 0.75,
                 border: "1px solid transparent",
               }}
             >
               <span aria-hidden className="text-base leading-none">
-                {pushState === "on" ? "🔔" : "🔕"}
+                ⟳
               </span>
-              <span className="hidden sm:inline text-base">
-                {pushState === "on" ? "Alerts on" : "Alerts"}
+              <span className="visually-hidden">
+                {refreshing ? "Refreshing…" : "Refresh"}
               </span>
             </button>
           </div>
-          {pushNote && (
-            <div role="status" className="text-xs muted font-medium">
-              {pushNote}
-            </div>
-          )}
           <ThemeSwitcher />
         </header>
+
+        {pushModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ background: "rgba(0,0,0,0.55)" }}
+            onClick={() => setPushModal(null)}
+            role="presentation"
+          >
+            <div
+              className="card w-full max-w-xs p-4 flex flex-col gap-3"
+              style={{ background: "var(--card)", color: "var(--text)" }}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Battery alerts"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-base font-bold">Battery alerts</span>
+                <button
+                  className="px-2 py-1 rounded-lg text-base font-semibold"
+                  style={{ color: "var(--muted)" }}
+                  onClick={() => setPushModal(null)}
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="text-sm font-medium">{pushModal}</div>
+              <button
+                type="button"
+                className="rounded-lg py-2 text-sm font-bold"
+                style={{ background: "var(--accent)", color: "#fff" }}
+                onClick={() => setPushModal(null)}
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        )}
 
         <LiveCards live={liveValues} loading={isLiveLoading} />
 

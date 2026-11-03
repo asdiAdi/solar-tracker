@@ -108,7 +108,7 @@ export class SolarTrackerBackendStack extends cdk.Stack {
     plan.addApiStage({ stage: this.api.deploymentStage });
     plan.addApiKey(key);
 
-    for (const p of ["live", "day", "month", "year", "battery-check"]) {
+    for (const p of ["live", "day", "month", "year"]) {
       this.api.root
         .addResource(p)
         .addMethod("GET", new apigw.LambdaIntegration(fn), {
@@ -138,7 +138,9 @@ export class SolarTrackerBackendStack extends cdk.Stack {
       schedule: events.Schedule.rate(cdk.Duration.minutes(30)),
       targets: [
         new targets.LambdaFunction(fn, {
-          event: events.RuleTargetInput.fromObject({ path: "/battery-check" }),
+          event: events.RuleTargetInput.fromObject({
+            source: "solar-tracker.scheduler",
+          }),
         }),
       ],
     });

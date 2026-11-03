@@ -9,7 +9,7 @@ self.addEventListener("push", (event) => {
       body: payload.body || "",
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      tag: "solar-battery-alert",
+      tag: payload.tag || "solar-battery-alert",
       data: { url: payload.url || "/" },
     }),
   );
